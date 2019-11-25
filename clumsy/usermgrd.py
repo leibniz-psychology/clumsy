@@ -84,9 +84,8 @@ async def addUser (request):
 		o['gidNumber'] = gid
 		o['memberUid'] = user
 		await conn.add (o)
-	reservedUid.remove (uid)
-
 	await flushUserCache ()
+	reservedUid.remove (uid)
 
 	logger.debug ('adding kerberos user')
 	# XXX: remove password from commandline
