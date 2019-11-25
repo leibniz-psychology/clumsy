@@ -69,8 +69,8 @@ async def addUser (request):
 				'posixAccount',
 				'shadowAccount',
 				]
-		o['sn'] = 'Project account {user}'
-		o['cn'] = '{user}'
+		o['sn'] = f'Project account {user}'
+		o['cn'] = f'{user}'
 		o['loginShell'] = '/bin/bash'
 		o['uidNumber'] = uid
 		o['gidNumber'] = gid
