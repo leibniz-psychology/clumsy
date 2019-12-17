@@ -1,5 +1,7 @@
 """
 Flush nscd’s caches
+
+Must be run as root.
 """
 
 import asyncio, subprocess

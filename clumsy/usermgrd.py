@@ -19,10 +19,17 @@ def randomSecret (n):
 	alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
 	return ''.join (secrets.choice (alphabet) for i in range (n))
 
-async def flushUserCache ():
-	# flush the local user caches
-	async with aiohttp.ClientSession() as session:
-		async with session.delete (f'http://localhost/nscdflushd/account') as resp:
+def socketSession (path):
+	conn = aiohttp.UnixConnector (path=path)
+	return aiohttp.ClientSession(connector=conn)
+
+async def flushUserCache (sockpath):
+	"""
+	Flush the local user caches
+	"""
+	async with socketSession (sockpath) as session:
+		# hostname does not matter for unix domain socket?
+		async with session.delete (f'http://localhost/account') as resp:
 			deldata = await resp.json ()
 			if deldata['status'] != 'ok':
 				return response.json ({'status': 'cache_flush'}, status=500)
@@ -84,7 +91,7 @@ async def addUser (request):
 		o['gidNumber'] = gid
 		o['memberUid'] = user
 		await conn.add (o)
-	await flushUserCache ()
+	await flushUserCache (config.NSCDFLUSHD_SOCKET)
 	reservedUid.remove (uid)
 
 	logger.debug ('adding kerberos user')
@@ -97,8 +104,8 @@ async def addUser (request):
 		return response.json ({'status': 'kerberos_failed', 'ldap_code': ret}, status=500)
 
 	# create homedir
-	async with aiohttp.ClientSession() as session:
-		async with session.post (f'http://localhost/mkhomedird/{user}') as resp:
+	async with socketSession (config.MKHOMEDIRD_SOCKET) as session:
+		async with session.post (f'http://localhost/{user}') as resp:
 			data = await resp.json ()
 			if data['status'] != 'ok':
 				return response.json ({'status': 'mkhomedir_failed', 'mkhomedird_status': data['status']})
@@ -143,8 +150,8 @@ async def deleteUser (request, user):
 			return response.json ({'status': 'kerberos_failed', 'ldap_code': ret}, status=500)
 
 	# mark homedir for deletion
-	session = aiohttp.ClientSession()
-	async with session.delete (f'http://localhost/mkhomedird/{user}') as resp:
+	session = socketSession (config.MKHOMEDIRD_SOCKET)
+	async with session.delete (f'http://localhost/{user}') as resp:
 		deldata = await resp.json ()
 		if deldata['status'] != 'again':
 			return response.json ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
@@ -153,10 +160,10 @@ async def deleteUser (request, user):
 		await conn.delete (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
 		await conn.delete (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
 
-	await flushUserCache ()
+	await flushUserCache (config.NSCDFLUSHD_SOCKET)
 
 	# finally delete homedir
-	async with session.delete (f'http://localhost/mkhomedird/{user}', params={'token': deldata['token']}) as resp:
+	async with session.delete (f'http://localhost/{user}', params={'token': deldata['token']}) as resp:
 		deldata = await resp.json ()
 		if deldata['status'] != 'ok':
 			return response.json ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
