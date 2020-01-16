@@ -4,15 +4,17 @@ Create and delete user accounts on behalf of other daemons.
 Users must be local to the system this service is running on.
 """
 
-import secrets, asyncio, subprocess, bonsai, random
+import secrets, bonsai, random
 
 import aiohttp
 from sanic import Sanic, Blueprint, response
 from sanic.log import logger
 
 from .nss import getUser
+from .kadm import KAdm, KAdmException
 
 client = None
+kadm = None
 reservedUid = set ()
 
 def randomSecret (n):
@@ -34,18 +36,18 @@ async def flushUserCache (sockpath):
 			if deldata['status'] != 'ok':
 				return response.json ({'status': 'cache_flush'}, status=500)
 
-kadminCommonArgs = ['kadmin', '-k', '-t', 'notebook.keytab', '-p', 'notebook/web.compute.zpid.de']
-
 bp = Blueprint('usermgrd')
 
 @bp.listener('before_server_start')
 async def setup (app, loop):
-	global client
+	global client, kadm
 
 	config = app.config
 
 	client = bonsai.LDAPClient (config.LDAP_SERVER)
 	client.set_credentials ("SIMPLE", user=config.LDAP_USER, password=config.LDAP_PASSWORD)
+
+	kadm = KAdm (config.KERBEROS_USER, config.KERBEROS_KEYTAB)
 
 @bp.route ('/', methods=['POST'])
 async def addUser (request):
@@ -94,13 +96,10 @@ async def addUser (request):
 	await flushUserCache (config.NSCDFLUSHD_SOCKET)
 	reservedUid.remove (uid)
 
-	logger.debug ('adding kerberos user')
-	# XXX: remove password from commandline
-	cmd = kadminCommonArgs + ['add_principal', '+requires_preauth', '-allow_svr', '-pw', password, user]
-	logger.debug (' '.join (cmd))
-	proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL)
-	ret = await proc.wait ()
-	if ret != 0:
+	try:
+		logger.debug ('adding kerberos user')
+		await kadm.addPrincipal (user, password)
+	except KAdmException:
 		return response.json ({'status': 'kerberos_failed', 'ldap_code': ret}, status=500)
 
 	# create homedir
@@ -123,8 +122,6 @@ async def deleteUser (request, user):
 	profile directory
 	"""
 
-	# XXX: should kill all processes of user
-
 	config = request.app.config
 
 	try:
@@ -136,18 +133,14 @@ async def deleteUser (request, user):
 		return response.json ({'status': 'unauthorized'}, status=403)
 
 	# disallow logging in by deleting principal
-	cmd = kadminCommonArgs + ['get_principal', user]
-	logger.debug (' '.join (cmd))
-	proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL)
-	ret = await proc.wait ()
-	if ret == 0:
-		# delete principal if it exists
-		cmd = kadminCommonArgs + ['delete_principal', '-force', user]
-		logger.debug (' '.join (cmd))
-		proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL)
-		ret = await proc.wait ()
-		if ret != 0:
-			return response.json ({'status': 'kerberos_failed', 'ldap_code': ret}, status=500)
+	try:
+		await kadm.getPrincipal (user)
+		# XXX: race-condition
+		await kadm.deletePrincipal (user)
+	except KeyError:
+		logger.warn (f'kerberos principal for {user} already gone')
+	except KAdmException:
+		return response.json ({'status': 'kerberos_failed', 'ldap_code': ret}, status=500)
 
 	# mark homedir for deletion
 	session = socketSession (config.MKHOMEDIRD_SOCKET)
