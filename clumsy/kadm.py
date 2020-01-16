@@ -24,11 +24,25 @@ class KAdm:
 		self.env = env
 
 	async def addPrincipal (self, name, password):
-		# XXX: remove password from commandline
-		cmd = self.commonArgs + ['add_principal', '+requires_preauth', '-allow_svr', '-pw', password, name]
+		cmd = self.commonArgs + ['add_principal', '+requires_preauth', '-allow_svr', name]
 		logger.debug (' '.join (cmd))
-		proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=self.env)
-		buf = await proc.stdout.read ()
+		proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=self.env)
+
+		buf = await proc.stdout.read (512)
+		assert buf.startswith (b'Enter password for principal '), buf
+		proc.stdin.write (password.encode ('utf-8'))
+		proc.stdin.write (b'\n')
+
+		buf = await proc.stdout.read (512)
+		assert buf.startswith (b'\nRe-enter password for principal '), buf
+		proc.stdin.write (password.encode ('utf-8'))
+		proc.stdin.write (b'\n')
+
+		buf = await proc.stdout.read (512)
+		assert buf == b'\n', buf
+
+		proc.stdin.close ()
+
 		ret = await proc.wait ()
 		if ret != 0:
 			raise KAdmException (buf)
