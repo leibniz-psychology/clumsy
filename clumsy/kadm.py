@@ -30,13 +30,11 @@ class KAdm:
 
 		buf = await proc.stdout.read (512)
 		assert buf.startswith (b'Enter password for principal '), buf
-		proc.stdin.write (password.encode ('utf-8'))
-		proc.stdin.write (b'\n')
+		proc.stdin.write (password.encode ('utf-8') + b'\n')
 
 		buf = await proc.stdout.read (512)
 		assert buf.startswith (b'\nRe-enter password for principal '), buf
-		proc.stdin.write (password.encode ('utf-8'))
-		proc.stdin.write (b'\n')
+		proc.stdin.write (password.encode ('utf-8') + b'\n')
 
 		buf = await proc.stdout.read (512)
 		assert buf == b'\n', buf
