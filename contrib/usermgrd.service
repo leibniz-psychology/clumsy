@@ -1,0 +1,11 @@
+[Unit]
+Description=Cluster user management
+
+[Service]
+ExecStart=/usr/local/bin/clumsy usermgrd
+Environment="SETTINGS_FILE=/usr/local/etc/clumsy/usermgrd.config"
+StandardOutput=syslog
+StandardError=syslog
+
+[Install]
+WantedBy=multi-user.target

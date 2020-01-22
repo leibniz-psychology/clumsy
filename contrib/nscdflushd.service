@@ -1,0 +1,11 @@
+[Unit]
+Description=NSCD cache flushing daemon
+
+[Service]
+ExecStart=/usr/local/bin/clumsy nscdflushd
+Environment="SETTINGS_FILE=/usr/local/etc/clumsy/nscdflushd.config"
+StandardOutput=syslog
+StandardError=syslog
+
+[Install]
+WantedBy=multi-user.target
