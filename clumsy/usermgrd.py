@@ -13,7 +13,7 @@ from sanic.log import logger
 from .nss import getUser
 from .kadm import KAdm, KAdmException
 
-client = None
+ldapc = None
 kadm = None
 reservedUid = set ()
 
@@ -40,12 +40,12 @@ bp = Blueprint('usermgrd')
 
 @bp.listener('before_server_start')
 async def setup (app, loop):
-	global client, kadm
+	global ldapc, kadm
 
 	config = app.config
 
-	client = bonsai.LDAPClient (config.LDAP_SERVER)
-	client.set_credentials ("SIMPLE", user=config.LDAP_USER, password=config.LDAP_PASSWORD)
+	ldapc = bonsai.LDAPClient (config.LDAP_SERVER)
+	ldapc.set_credentials ("SIMPLE", user=config.LDAP_USER, password=config.LDAP_PASSWORD)
 
 	kadm = KAdm (config.KERBEROS_USER, config.KERBEROS_KEYTAB)
 
@@ -68,7 +68,7 @@ async def addUser (request):
 				reservedUid.add (uid)
 				break
 
-	async with client.connect (is_async=True) as conn:
+	async with ldapc.connect (is_async=True) as conn:
 		o = bonsai.LDAPEntry (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
 		o['objectClass'] = [
 				'top',
@@ -149,7 +149,7 @@ async def deleteUser (request, user):
 		if deldata['status'] != 'again':
 			return response.json ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
 
-	async with client.connect (is_async=True) as conn:
+	async with ldapc.connect (is_async=True) as conn:
 		await conn.delete (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
 		await conn.delete (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
 
