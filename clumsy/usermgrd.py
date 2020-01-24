@@ -64,8 +64,7 @@ async def teardown (app, loop):
 
 @bp.exception(SanicException)
 async def handleErrors (request, exc):
-	assert 'status' in exc.message
-	return response.json (exc.message, status=exc.status_code)
+	return response.json (exc.args[0], status=exc.status_code)
 
 def withRollback (func):
 	"""
