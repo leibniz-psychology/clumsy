@@ -58,8 +58,8 @@ async def setup (app, loop):
 
 @bp.listener('after_server_stop')
 async def teardown (app, loop):
-	flushsession.close ()
-	homedirsession.close ()
+	await flushsession.close ()
+	await homedirsession.close ()
 	ldapc.close ()
 
 @bp.exception(SanicException)
