@@ -21,6 +21,7 @@ setup(
     tests_require=[
         'pytest',
         'pytest-asyncio',
+		'pytest-cov',
     ],
     python_requires='>=3.7',
     entry_points={

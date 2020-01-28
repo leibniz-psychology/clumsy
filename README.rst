@@ -52,3 +52,15 @@ And deleting a user works the same:
 
 .. _pam_mkhomedir: https://linux.die.net/man/8/pam_mkhomedir
 
+Development
+^^^^^^^^^^^
+
+Unit-tests can be run with
+
+.. code:: console
+
+	$ python setup.py test
+
+which also generates a coverage report in the directory ``htmlcov`` by default.
+No automated integration tests exist right now.
+
