@@ -1,0 +1,13 @@
+[Unit]
+Description=Kill Them With Kindness
+
+[Service]
+ExecStart=/usr/local/bin/clumsy ktwkd
+StandardOutput=syslog
+StandardError=syslog
+CapabilityBoundingSet=CAP_KILL
+User=clumsyktwkd
+Group=clumsyktwkd
+
+[Install]
+WantedBy=multi-user.target
