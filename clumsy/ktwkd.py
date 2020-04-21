@@ -11,7 +11,7 @@ Use::
 as root to test this program works.
 """
 
-import asyncio, os, re, signal
+import asyncio, os, re, signal, logging
 
 from .nss import getUser
 
@@ -30,7 +30,7 @@ async def ktwkd ():
 	minuid = 1000
 
 	while True:
-		print ('searching for orphaned procs')
+		logging.debug ('searching for orphaned procs')
 		# Yes, psutil exists. No, I’m not using it.
 		for x in os.listdir('/proc'):
 			if x.isdigit():
@@ -43,11 +43,11 @@ async def ktwkd ():
 								try:
 									user = getUser (real)
 								except KeyError:
-									print (f'killing pid {pid} user {real}')
+									logging.info (f'killing pid {pid} user {real}')
 									try:
 										os.kill (pid, signal.SIGKILL)
 									except PermissionError:
-										print (f'cannot kill {pid}, are you root?')
+										logging.error (f'cannot kill {pid}, are you root?')
 									except ProcessLookupError:
 										# already gone
 										pass

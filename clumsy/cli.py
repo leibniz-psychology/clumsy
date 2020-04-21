@@ -1,4 +1,4 @@
-import sys, socket, shutil, os, asyncio
+import sys, socket, shutil, os, asyncio, logging
 
 from sanic import Sanic, Blueprint
 
@@ -33,5 +33,6 @@ def main ():
 
 		app.run (sock=sock)
 	else:
+		logging.basicConfig (level=logging.INFO)
 		asyncio.run (modulebp ())
 
