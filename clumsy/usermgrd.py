@@ -181,8 +181,11 @@ async def deleteUser (request, user):
 		if deldata['status'] != 'again':
 			raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
 
-	await ldapc.delete (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
-	await ldapc.delete (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
+	try:
+		await ldapc.delete (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
+		await ldapc.delete (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
+	except LDAPError as e:
+		raise ServerError ({'status': 'ldap', 'ldap_status': str (e), 'ldap_code': e.code})
 
 	await flushUserCache ()
 
