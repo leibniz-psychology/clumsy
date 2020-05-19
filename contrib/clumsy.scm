@@ -24,8 +24,7 @@
   (arguments `(#:tests? #f))
   (propagated-inputs
    `(("python-sanic" ,python-sanic)
-     ;; must use this version, since python-sanic uses it too
-     ("python-aiohttp" ,python-aiohttp-3.6)
+     ("python-aiohttp" ,python-aiohttp)
      ("python-bonsai" ,python-bonsai)))
   (native-inputs
     `(("python-pytest" ,python-pytest)
