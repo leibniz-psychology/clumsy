@@ -48,8 +48,11 @@ class Process:
 	def all (cls):
 		for x in os.listdir('/proc'):
 			if x.isdigit():
-				pid = int (x)
-				yield cls (pid)
+				try:
+					yield cls (int (x))
+				except ProcessLookupError:
+					# already gone
+					pass
 
 async def ktwkd ():
 	minuid = 1000
