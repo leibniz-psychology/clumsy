@@ -16,6 +16,7 @@ setup(
         # XXX: version 4 is currently broken, blacklist it
         'aiohttp<4',
         'bonsai',
+        'unidecode',
     ],
     setup_requires=['pytest-runner'],
     tests_require=[

@@ -25,6 +25,7 @@
   (propagated-inputs
    `(("python-sanic" ,python-sanic)
      ("python-aiohttp" ,python-aiohttp)
+     ("python-unidecode" ,python-unidecode)
      ("python-bonsai" ,python-bonsai)))
   (native-inputs
     `(("python-pytest" ,python-pytest)

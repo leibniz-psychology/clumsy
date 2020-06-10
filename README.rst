@@ -52,6 +52,17 @@ And deleting a user works the same:
 
 .. _pam_mkhomedir: https://linux.die.net/man/8/pam_mkhomedir
 
+Deployment
+^^^^^^^^^^
+
+It’s not possible to flush sssd’s negative lookup cache, so a low TTL is highly
+recommended in ``/etc/sssd/sssd.conf``:
+
+.. code::
+
+	[nss]
+		entry_negative_timeout = 1
+
 Development
 ^^^^^^^^^^^
 

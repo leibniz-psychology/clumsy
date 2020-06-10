@@ -1,6 +1,10 @@
 import sys, socket, shutil, os, asyncio, logging
+from traceback import format_exc
 
 from sanic import Sanic, Blueprint
+from sanic.exceptions import SanicException
+from sanic.response import json
+from sanic.log import logger
 
 from .mkhomedird import bp as mkhomedird
 from .nscdflushd import bp as nscdflushd
@@ -16,6 +20,15 @@ def main ():
 		app.config.from_envvar (f'SETTINGS_FILE')
 		config = app.config
 		app.blueprint (modulebp)
+
+		@app.exception(Exception)
+		async def handleErrors (request, exc):
+			if isinstance (exc, SanicException):
+				logger.error (exc.args[0])
+				return json (exc.args[0], status=exc.status_code)
+			else:
+				logger.error (format_exc ())
+				return json ({'status': 'bug'}, status=500)
 
 		sock = socket.socket (socket.AF_UNIX)
 		if os.path.exists (config.SOCKET):

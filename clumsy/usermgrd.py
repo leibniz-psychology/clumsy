@@ -4,13 +4,15 @@ Create and delete user accounts on behalf of other daemons.
 Users must be local to the system this service is running on.
 """
 
-import secrets, bonsai, random, functools
+import secrets, bonsai, random, functools, re, asyncio
 from contextlib import AsyncExitStack
+from collections import namedtuple
 
 import aiohttp
 from sanic import Blueprint, response
 from sanic.log import logger
-from sanic.exceptions import ServerError, Forbidden, NotFound, SanicException
+from sanic.exceptions import ServerError, Forbidden, NotFound
+from unidecode import unidecode
 
 from .nss import getUser
 from .kadm import KAdm, KAdmException
@@ -19,7 +21,6 @@ ldapc = None
 kadm = None
 flushsession = None
 homedirsession = None
-reservedUid = set ()
 
 def randomSecret (n):
 	alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -34,10 +35,14 @@ async def flushUserCache ():
 	Flush the local user caches
 	"""
 	# hostname does not matter for unix domain socket?
-	async with flushsession.delete (f'http://localhost/account') as resp:
-		deldata = await resp.json ()
-		if deldata['status'] != 'ok':
-			raise ServerError ({'status': 'flush_failed', 'nscdflush_status': deldata['status']})
+	try:
+		logger.debug (f'flushing caches')
+		async with flushsession.delete (f'http://localhost/account') as resp:
+			deldata = await resp.json ()
+			if deldata['status'] != 'ok':
+				raise ServerError ({'status': 'flush_failed', 'nscdflush_status': deldata['status']})
+	except aiohttp.ClientError:
+		raise ServerError ({'status': 'nscdflushd_connect'})
 
 bp = Blueprint('usermgrd')
 
@@ -62,10 +67,6 @@ async def teardown (app, loop):
 	await homedirsession.close ()
 	ldapc.close ()
 
-@bp.exception(SanicException)
-async def handleErrors (request, exc):
-	return response.json (exc.args[0], status=exc.status_code)
-
 def withRollback (func):
 	"""
 	Rollback operations performed by func if it fails (i.e. Exception is raised)
@@ -81,25 +82,62 @@ def withRollback (func):
 			return ret
 	return wrapped
 
+UserInfo = namedtuple ('UserInfo',
+		['firstName', 'lastName', 'username', 'orcid', 'authorization',
+		'email'],
+		defaults=[None]*6)
+
+def possibleUsernames (userdata, minlen=3, maxlen=16):
+	"""
+	Create UNIX account names based on submitted user data
+	"""
+
+	def generate (maxlen):
+		prefixes = []
+		# preferred username
+		if userdata.username:
+			prefixes.append (unidecode (userdata.username))
+		# otherwise use the actual name
+		if userdata.firstName and userdata.lastName:
+			prefixes.append ((unidecode (userdata.firstName)[0] + unidecode (userdata.lastName)))
+		for postfix in [''] + list (range (1, 10)):
+			for prefix in prefixes:
+				postfix = str (postfix)
+				yield f'{prefix[:maxlen-len (postfix)]}{postfix}'
+
+	r = re.compile (r'[^a-z0-9]')
+	for u in generate (maxlen):
+		u = r.sub ('', u.lower ())
+		if len (u) >= minlen:
+			yield u
+
+def findUnused (it):
+	""" From iterator it find unused user or user id """
+	for u in it:
+		try:
+			res = getUser (u)
+		except KeyError:
+			return u
+	return None
+
 @bp.route ('/', methods=['POST'])
 @withRollback
 async def addUser (request, rollback):
 	config = request.app.config
 
-	while True:
-		user = 'p' + randomSecret (16)
-		password = randomSecret (32)
-		uid = random.randrange (config.MIN_UID, config.MAX_UID)
-		gid = uid
+	form = request.json
+	logger.debug (f'creating new user from {form}')
+	userdata = UserInfo (**form)
 
-		try:
-			res = getUser (uid)
-		except KeyError:
-			# is this one actually free to use? (prevent race condition for two
-			# clients asking for a new account at the same time)
-			if uid not in reservedUid:
-				reservedUid.add (uid)
-				break
+	# make sure the sanitized usernames are >= 3 characters long
+	user = findUnused (possibleUsernames (userdata))
+	if not user:
+		raise ServerError ({'status': 'username'})
+
+	uid = gid = findUnused ([random.randrange (config.MIN_UID, config.MAX_UID) \
+			for i in range (100)])
+	if not uid:
+		raise ServerError ({'status': 'uid'})
 
 	o = bonsai.LDAPEntry (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
 	o['objectClass'] = [
@@ -110,39 +148,75 @@ async def addUser (request, rollback):
 			'posixAccount',
 			'shadowAccount',
 			]
-	o['sn'] = f'Project account {user}'
-	o['cn'] = f'{user}'
-	o['loginShell'] = '/bin/bash'
+	# LDAP: person
+	o['sn'] = userdata.lastName
+	o['cn'] = user
+	# LDAP: inetOrgPerson
+	o['givenName'] = userdata.firstName
+	o['mail'] = userdata.email
+	# LDAP: posixAccount
+	o['uid'] = user
 	o['uidNumber'] = uid
 	o['gidNumber'] = gid
-	o['uid'] = user
 	o['homeDirectory'] = f'/home/{user}'
-	await ldapc.add (o)
-	rollback.push_async_callback (o.delete)
+	o['loginShell'] = '/bin/bash'
+	try:
+		logger.debug (f'adding user {o} to ldap')
+		await ldapc.add (o)
+		# LIFO -> flush cache last
+		rollback.push_async_callback (flushUserCache)
+		rollback.push_async_callback (o.delete)
+	except bonsai.errors.AlreadyExists:
+		raise ServerError ({'status': 'user_exists'})
 
 	o = bonsai.LDAPEntry (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
 	o['objectClass'] = ['top', 'posixGroup']
 	o['cn'] = user
 	o['gidNumber'] = gid
 	o['memberUid'] = user
-	await ldapc.add (o)
-	rollback.push_async_callback (o.delete)
+	try:
+		logger.debug (f'adding group {o} to ldap')
+		await ldapc.add (o)
+		rollback.push_async_callback (o.delete)
+	except bonsai.errors.AlreadyExists:
+		raise ServerError ({'status': 'group_exists'})
 
-	await flushUserCache ()
-	reservedUid.remove (uid)
+	# flush and sanity check to make sure the user actually exists now and
+	# is resolvable in both directions (user->uid; uid->user)
+	ok = False
+	for i in range (60):
+		await flushUserCache ()
+
+		try:
+			resUser = getUser (user)
+			resUid = getUser (uid)
+			if resUser != resUid:
+				raise ServerError ({'status': 'user_mismatch'})
+			ok = True
+			break
+		except KeyError:
+			logger.debug (f'user {user} not resolvable yet, retrying')
+			await asyncio.sleep (1)
+	if not ok:
+		raise ServerError ({'status': 'user_add_failed'})
 
 	try:
-		logger.debug ('adding kerberos user')
+		logger.debug (f'adding kerberos user {user}')
+		password = randomSecret (32)
 		await kadm.addPrincipal (user, password)
 		rollback.push_async_callback (kadm.deletePrincipal, user)
 	except KAdmException:
 		raise ServerError ({'status': 'kerberos_failed'})
 
 	# create homedir
-	async with homedirsession.post (f'http://localhost/{user}') as resp:
-		data = await resp.json ()
-		if data['status'] != 'ok':
-			raise ServerError ({'status': 'mkhomedir_failed', 'mkhomedird_status': data['status']})
+	try:
+		logger.debug (f'adding homedir for {user}')
+		async with homedirsession.post (f'http://localhost/{user}') as resp:
+			data = await resp.json ()
+			if data['status'] != 'ok':
+				raise ServerError ({'status': 'mkhomedir_failed', 'mkhomedird_status': data['status']})
+	except aiohttp.ClientError:
+		raise ServerError ({'status': 'mkhomedird_connect'})
 
 	return response.json ({'status': 'ok', 'user': user, 'password': password, 'uid': uid, 'gid': uid}, status=201)
 
