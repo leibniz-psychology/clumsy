@@ -232,6 +232,8 @@ async def deleteUser (request, user):
 	config = request.app.config
 	token = request.args.get ('token')
 	newToken = ''
+	delToken = dict ()
+	delUser = None
 	delFile = None
 
 	if not token:
@@ -239,15 +241,27 @@ async def deleteUser (request, user):
 				try:
 						res = getUser (user)
 						newToken = randomSecret(32)
-						delFile = os.path.join('/home/' + res['name'] + '/' + 'confirm_deletion' + '_' + res['name'] + '_' + newToken)
+						delFile = os.path.join(res['homedir'] + '/' + 'confirm_deletion' + '_' + newToken)
+						delUser = res['name']
+						delToken[newToken] = (delUser, delFile)
 						return response.json ({'status': 'delete', 'token': delFile})
 				except KeyError:
 						raise NotFound ({'status': 'user_not_found'})
+	else:
+				try:
+						delUser, delFile = delToken[token]
+						if (user != delUser):
+							raise KeyError ('wrong user')
+						else:
+							pass
+				except KeyError:
+						return response.json ({'status': 'invalid_token'})
 
 	if not (config.MIN_UID <= res['uid'] < config.MAX_UID):
 				raise Forbidden ({'status': 'unauthorized'})
 
 	# check whether the file exists and recent
+
 	if (os.path.isfile(delFile)):
 				if (int(time.time() - os.path.getctime(delFile)) <= 60):
 						# disallow logging in by deleting principal
