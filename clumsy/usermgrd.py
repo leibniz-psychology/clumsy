@@ -21,6 +21,8 @@ ldapc = None
 kadm = None
 flushsession = None
 homedirsession = None
+delFile = None
+delToken = dict ()
 
 def randomSecret (n):
 	alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -232,9 +234,6 @@ async def deleteUser (request, user):
 	config = request.app.config
 	token = request.args.get ('token')
 	newToken = ''
-	delToken = dict ()
-	delUser = None
-	delFile = None
 
 	if not token:
 				# get a new token
@@ -243,19 +242,19 @@ async def deleteUser (request, user):
 						newToken = randomSecret(32)
 						delFile = os.path.join(res['homedir'] + '/' + 'confirm_deletion' + '_' + newToken)
 						delUser = res['name']
-						delToken[newToken] = (delUser, delFile)
+						delToken[delUser] = (newToken, delFile)
 						return response.json ({'status': 'delete', 'token': delFile})
 				except KeyError:
 						raise NotFound ({'status': 'user_not_found'})
 	else:
 				try:
-						delUser, delFile = delToken[token]
-						if (user != delUser):
-							raise KeyError ('wrong user')
+						newToken, delFile = delToken[user]
+						if (token != newToken):
+							raise KeyError ('wrong token')
 						else:
 							pass
 				except KeyError:
-						return response.json ({'status': 'invalid_token'})
+						return response.json ({'status': 'invalid user'})
 
 	if not (config.MIN_UID <= res['uid'] < config.MAX_UID):
 				raise Forbidden ({'status': 'unauthorized'})
