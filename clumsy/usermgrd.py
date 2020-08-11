@@ -21,7 +21,6 @@ ldapc = None
 kadm = None
 flushsession = None
 homedirsession = None
-delFile = None
 delToken = dict ()
 
 def randomSecret (n):
@@ -232,61 +231,62 @@ async def deleteUser (request, user):
 	"""
 
 	config = request.app.config
-	newToken = ''
 	res = getUser (user)
+	delFile = None
 
 	if user not in delToken:
-				# get a new token
-				try:
-						newToken = randomSecret(32)
-						delFile = os.path.join(res['homedir'] + '/' + 'confirm_deletion' + '_' + newToken)
-						delUser = res['name']
-						delToken[delUser] = (newToken, delFile)
-						return response.json ({'status': 'delete', 'token': delFile})
-				except KeyError:
-						raise NotFound ({'status': 'user not found'})
+		# get a new token
+		try:
+			newToken = randomSecret(32)
+			delFile = os.path.join(res['homedir'] + '/' + 'confirm_deletion' + '_' + newToken)
+			delUser = res['name']
+			delToken[delUser] = delFile
+			return response.json ({'status': 'delete', 'token': delFile})
+		except KeyError:
+			raise NotFound ({'status': 'user_not_found'})
 	else:
-				try:
-						newToken, delFile = delToken[user]
-				except KeyError:
-						raise NotFound ({'status': 'invalid user'})
+		try:
+			delFile = delToken.pop (user)
+		except KeyError:
+			raise NotFound ({'status': 'no_token'})
 
 	if not (config.MIN_UID <= res['uid'] < config.MAX_UID):
-				raise Forbidden ({'status': 'unauthorized'})
+		raise Forbidden ({'status': 'unauthorized'})
 
 	# check whether the file exists and recent
+	if os.path.isfile(delFile) and (time.time() - os.path.getctime(delFile)) <= 60:
+		# disallow logging in by deleting principal
+		try:
+			await kadm.getPrincipal (user)
+			# XXX: race-condition
+			await kadm.deletePrincipal (user)
+		except KeyError:
+			logger.warning (f'kerberos principal for {user} already gone')
+		except KAdmException:
+			raise ServerError ({'status': 'kerberos_failed'})
 
-	if (os.path.isfile(delFile)):
-				if (int(time.time() - os.path.getctime(delFile)) <= 60):
-						# disallow logging in by deleting principal
-						try:
-								await kadm.getPrincipal (user)
-								# XXX: race-condition
-								await kadm.deletePrincipal (user)
-						except KeyError:
-								logger.warning (f'kerberos principal for {user} already gone')
-						except KAdmException:
-								raise ServerError ({'status': 'kerberos_failed'})
+		# mark homedir for deletion
+		async with homedirsession.delete (f'http://localhost/{user}') as resp:
+			deldata = await resp.json ()
+			if deldata['status'] != 'again':
+				raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
 
-						# mark homedir for deletion
-						async with homedirsession.delete (f'http://localhost/{user}') as resp:
-								deldata = await resp.json ()
-								if deldata['status'] != 'again':
-									raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
+		try:
+			await ldapc.delete (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
+			await ldapc.delete (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
+		except LDAPError as e:
+			raise ServerError ({'status': 'ldap', 'ldap_status': str (e), 'ldap_code': e.code})
 
-						try:
-								await ldapc.delete (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
-								await ldapc.delete (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
-						except LDAPError as e:
-								raise ServerError ({'status': 'ldap', 'ldap_status': str (e), 'ldap_code': e.code})
+		await flushUserCache ()
 
-						await flushUserCache ()
+		# finally delete homedir
+		async with homedirsession.delete (f'http://localhost/{user}', params={'token': deldata['token']}) as resp:
+			deldata = await resp.json ()
+			if deldata['status'] != 'ok':
+				raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
 
-						# finally delete homedir
-						async with homedirsession.delete (f'http://localhost/{user}', params={'token': deldata['token']}) as resp:
-								deldata = await resp.json ()
-								if deldata['status'] != 'ok':
-									raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
-
-						return response.json ({'status': 'ok'})
+		return response.json ({'status': 'ok'})
+	else:
+		# user did not prove he is allowed to do this
+		raise Forbidden ({'status': 'no_proof'})
 
