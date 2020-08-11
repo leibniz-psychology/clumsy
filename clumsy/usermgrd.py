@@ -232,7 +232,6 @@ async def deleteUser (request, user):
 	"""
 
 	config = request.app.config
-	token = request.args.get ('token')
 	newToken = ''
 	res = getUser (user)
 
@@ -245,16 +244,12 @@ async def deleteUser (request, user):
 						delToken[delUser] = (newToken, delFile)
 						return response.json ({'status': 'delete', 'token': delFile})
 				except KeyError:
-						raise NotFound ({'status': 'user_not_found'})
+						raise NotFound ({'status': 'user not found'})
 	else:
 				try:
 						newToken, delFile = delToken[user]
-						#if (token != newToken):
-						#	raise KeyError ('wrong token')
-						#else:
-						#	pass
 				except KeyError:
-						return response.json ({'status': 'invalid user'})
+						raise NotFound ({'status': 'invalid user'})
 
 	if not (config.MIN_UID <= res['uid'] < config.MAX_UID):
 				raise Forbidden ({'status': 'unauthorized'})
