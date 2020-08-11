@@ -234,11 +234,11 @@ async def deleteUser (request, user):
 	config = request.app.config
 	token = request.args.get ('token')
 	newToken = ''
+	res = getUser (user)
 
-	if not token:
+	if user not in delToken:
 				# get a new token
 				try:
-						res = getUser (user)
 						newToken = randomSecret(32)
 						delFile = os.path.join(res['homedir'] + '/' + 'confirm_deletion' + '_' + newToken)
 						delUser = res['name']
@@ -249,10 +249,10 @@ async def deleteUser (request, user):
 	else:
 				try:
 						newToken, delFile = delToken[user]
-						if (token != newToken):
-							raise KeyError ('wrong token')
-						else:
-							pass
+						#if (token != newToken):
+						#	raise KeyError ('wrong token')
+						#else:
+						#	pass
 				except KeyError:
 						return response.json ({'status': 'invalid user'})
 
