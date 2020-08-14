@@ -5,6 +5,7 @@ Users must be local to the system this service is running on.
 """
 
 import secrets, bonsai, random, functools, re, asyncio, os, time
+from pwd import getpwuid
 from contextlib import AsyncExitStack
 from collections import namedtuple
 
@@ -230,8 +231,11 @@ async def deleteUser (request, user):
 	profile directory
 	"""
 
+	start = time.time()
 	config = request.app.config
 	delFile = None
+	delUser = None
+	owner = None
 	uid = 0
 
 	if user not in delToken:
@@ -243,7 +247,8 @@ async def deleteUser (request, user):
 			delFile = os.path.join(res['homedir'] + '/' + 'confirm_deletion' + '_' + newToken)
 			delUser = res['name']
 			delToken[delUser] = delFile
-			return response.json ({'status': 'delete', 'token': delFile})
+			if os.path.isfile(delFile) == False:
+                                return response.json ({'status': 'delete', 'token': delFile})
 		except KeyError:
 			raise NotFound ({'status': 'user_not_found'})
 	else:
@@ -251,14 +256,16 @@ async def deleteUser (request, user):
 			res = getUser (user)
 			uid = res['uid']
 			delFile = delToken.pop (user)
+			delUser = res['name']
 		except KeyError:
 			raise NotFound ({'status': 'no_token'})
 
 	if not (config.MIN_UID <= uid < config.MAX_UID):
 		raise Forbidden ({'status': 'unauthorized'})
 
-	# check whether the file exists and recent
-	if os.path.isfile(delFile) and (time.time() - os.path.getctime(delFile)) <= 60:
+	# check whether the file exists, belongs to the user who requested deletion, both the request and the token is recent
+	owner = getpwuid(os.stat(delFile).st_uid).pw_name
+	if os.path.isfile(delFile) and (owner == delUser or owner == 'root') and (time.time() - start) <= 60 and (time.time() - os.path.getctime(delFile)) <= 60:
 		# disallow logging in by deleting principal
 		try:
 			await kadm.getPrincipal (user)
