@@ -245,6 +245,9 @@ async def deleteUser (request, user):
 	except KeyError:
 		raise NotFound ({'status': 'user_not_found'})
 
+	if not (config.MIN_UID <= uid < config.MAX_UID):
+		raise Forbidden ({'status': 'unauthorized'})
+
 	if user not in delToken:
 		start = time.time()
 		newToken = randomSecret(32)
@@ -254,9 +257,6 @@ async def deleteUser (request, user):
 			return response.json ({'status': 'delete', 'token': delFile})
 
 	delFile, start = delToken.pop (user)
-
-	if not (config.MIN_UID <= uid < config.MAX_UID):
-		raise Forbidden ({'status': 'unauthorized'})
 
 	# check whether the file exists, belongs to the user who requested deletion, both the request and the token is recent
 	try:
