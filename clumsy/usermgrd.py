@@ -268,7 +268,7 @@ async def deleteUser (request, user):
 	try:
 		owner = getpwuid(os.stat(delFile).st_uid).pw_name
 	except FileNotFoundError:
-		raise NotFound ({'status': 'file_not_found'})
+		raise NotFound ({'status': 'no_proof'})
 
 	if os.path.isfile(delFile) and (owner == delUser or owner == 'root') and (time.time() - start) <= 60 and (time.time() - os.path.getctime(delFile)) <= 60:
 		# disallow logging in by deleting principal
@@ -304,5 +304,5 @@ async def deleteUser (request, user):
 		return response.json ({'status': 'ok'})
 	else:
 		# user did not prove he is allowed to do this
-		raise Forbidden ({'status': 'no_proof'})
+		raise Forbidden ({'status': 'invalid_proof'})
 
