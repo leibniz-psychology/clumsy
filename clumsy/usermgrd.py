@@ -249,11 +249,12 @@ async def deleteUser (request, user):
 
 	if user not in delToken:
 		start = time.time()
-		newToken = randomSecret(32)
-		delFile = os.path.join(res['homedir'], 'confirm_deletion' + '_' + newToken)
-		delToken[delUser] = (delFile, start)
-		if os.path.isfile(delFile) == False:
-			return response.json ({'status': 'delete', 'token': delFile})
+		while True:
+			newToken = randomSecret(32)
+			delFile = os.path.join(res['homedir'], 'confirm_deletion' + '_' + newToken)
+			delToken[delUser] = (delFile, start)
+			if not os.path.exists (delFile):
+				return response.json ({'status': 'delete', 'token': delFile})
 
 	delFile, start = delToken.pop (user)
 
