@@ -236,6 +236,7 @@ async def deleteUser (request, user):
 	owner = None
 	start = 0.0
 	uid = 0
+	now = time.time ()
 
 	try:
 		res = getUser (user)
@@ -248,11 +249,10 @@ async def deleteUser (request, user):
 		raise Forbidden ({'status': 'unauthorized'})
 
 	if user not in delToken:
-		start = time.time()
 		while True:
 			newToken = randomSecret(32)
 			delFile = os.path.join(res['homedir'], 'confirm_deletion' + '_' + newToken)
-			delToken[delUser] = (delFile, start)
+			delToken[delUser] = (delFile, now)
 			if not os.path.exists (delFile):
 				return response.json ({'status': 'delete', 'token': delFile})
 
@@ -264,7 +264,7 @@ async def deleteUser (request, user):
 	except FileNotFoundError:
 		raise NotFound ({'status': 'no_proof'})
 
-	if ownerUid == uid and (time.time() - start) <= 60 and (time.time() - os.path.getctime(delFile)) <= 60:
+	if ownerUid == uid and (now - start) <= 60 and (now - os.path.getctime(delFile)) <= 60:
 		# disallow logging in by deleting principal
 		try:
 			await kadm.getPrincipal (user)
