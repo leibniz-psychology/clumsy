@@ -270,7 +270,7 @@ async def deleteUser (request, user):
 	except FileNotFoundError:
 		raise NotFound ({'status': 'no_proof'})
 
-	if os.path.isfile(delFile) and (owner == delUser or owner == 'root') and (time.time() - start) <= 60 and (time.time() - os.path.getctime(delFile)) <= 60:
+	if owner == delUser and (time.time() - start) <= 60 and (time.time() - os.path.getctime(delFile)) <= 60:
 		# disallow logging in by deleting principal
 		try:
 			await kadm.getPrincipal (user)
