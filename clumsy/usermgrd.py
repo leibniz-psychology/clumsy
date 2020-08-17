@@ -252,11 +252,8 @@ async def deleteUser (request, user):
 		delToken[delUser] = (delFile, start)
 		if os.path.isfile(delFile) == False:
 			return response.json ({'status': 'delete', 'token': delFile})
-	else:
-		try:
-			delFile, start = delToken.pop (user)
-		except KeyError:
-			raise NotFound ({'status': 'no_token'})
+
+	delFile, start = delToken.pop (user)
 
 	if not (config.MIN_UID <= uid < config.MAX_UID):
 		raise Forbidden ({'status': 'unauthorized'})
