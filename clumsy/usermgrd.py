@@ -256,7 +256,7 @@ async def deleteUser (request, user):
 			delFile = os.path.join(res['homedir'], 'confirm_deletion' + '_' + newToken)
 			delToken[delUser] = (delFile, now)
 			if not os.path.exists (delFile):
-				return response.json ({'status': 'delete', 'token': delFile})
+				return response.json ({'status': 'again', 'token': delFile})
 
 	delFile, start = delToken.pop (user)
 
