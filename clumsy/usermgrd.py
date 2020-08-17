@@ -5,7 +5,6 @@ Users must be local to the system this service is running on.
 """
 
 import secrets, bonsai, random, functools, re, asyncio, os, time
-from pwd import getpwuid
 from contextlib import AsyncExitStack
 from collections import namedtuple
 
@@ -260,11 +259,11 @@ async def deleteUser (request, user):
 
 	# check whether the file exists, belongs to the user who requested deletion, both the request and the token is recent
 	try:
-		owner = getpwuid(os.stat(delFile).st_uid).pw_name
+		ownerUid = os.stat(delFile).st_uid
 	except FileNotFoundError:
 		raise NotFound ({'status': 'no_proof'})
 
-	if owner == delUser and (time.time() - start) <= 60 and (time.time() - os.path.getctime(delFile)) <= 60:
+	if ownerUid == uid and (time.time() - start) <= 60 and (time.time() - os.path.getctime(delFile)) <= 60:
 		# disallow logging in by deleting principal
 		try:
 			await kadm.getPrincipal (user)
