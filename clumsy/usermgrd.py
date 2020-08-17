@@ -238,26 +238,23 @@ async def deleteUser (request, user):
 	start = 0.0
 	uid = 0
 
+	try:
+		res = getUser (user)
+		uid = res['uid']
+		delUser = res['name']
+	except KeyError:
+		raise NotFound ({'status': 'user_not_found'})
+
 	if user not in delToken:
-		# get a new token
-		try:
-			res = getUser (user)
-			uid = res['uid']
-			start = time.time()
-			newToken = randomSecret(32)
-			delFile = os.path.join(res['homedir'] + '/' + 'confirm_deletion' + '_' + newToken)
-			delUser = res['name']
-			delToken[delUser] = (delFile, start)
-			if os.path.isfile(delFile) == False:
-				return response.json ({'status': 'delete', 'token': delFile})
-		except KeyError:
-			raise NotFound ({'status': 'user_not_found'})
+		start = time.time()
+		newToken = randomSecret(32)
+		delFile = os.path.join(res['homedir'] + '/' + 'confirm_deletion' + '_' + newToken)
+		delToken[delUser] = (delFile, start)
+		if os.path.isfile(delFile) == False:
+			return response.json ({'status': 'delete', 'token': delFile})
 	else:
 		try:
-			res = getUser (user)
-			uid = res['uid']
 			delFile, start = delToken.pop (user)
-			delUser = res['name']
 		except KeyError:
 			raise NotFound ({'status': 'no_token'})
 
