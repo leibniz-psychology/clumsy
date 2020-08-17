@@ -249,7 +249,7 @@ async def deleteUser (request, user):
 			delUser = res['name']
 			delToken[delUser] = (delFile, start)
 			if os.path.isfile(delFile) == False:
-				return response.json ({'status': 'delete', 'token': delFile})
+								return response.json ({'status': 'delete', 'token': delFile})
 		except KeyError:
 			raise NotFound ({'status': 'user_not_found'})
 	else:
@@ -267,8 +267,8 @@ async def deleteUser (request, user):
 	# check whether the file exists, belongs to the user who requested deletion, both the request and the token is recent
 	try:
 		owner = getpwuid(os.stat(delFile).st_uid).pw_name
-	except FileNotFoundError:
-		raise NotFound ({'status': 'file_not_found'})
+	except KeyError:
+		raise NotFound = ({'status': 'file_not_found'})
 
 	if os.path.isfile(delFile) and (owner == delUser or owner == 'root') and (time.time() - start) <= 60 and (time.time() - os.path.getctime(delFile)) <= 60:
 		# disallow logging in by deleting principal
