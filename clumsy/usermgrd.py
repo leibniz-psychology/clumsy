@@ -237,6 +237,8 @@ async def deleteUser (request, user):
 	start = 0.0
 	uid = 0
 	now = time.time ()
+	# in seconds
+	tokenTimeout = 60
 
 	try:
 		res = getUser (user)
@@ -264,7 +266,7 @@ async def deleteUser (request, user):
 	except FileNotFoundError:
 		raise NotFound ({'status': 'no_proof'})
 
-	if ownerUid == uid and (now - start) <= 60 and (now - os.path.getctime(delFile)) <= 60:
+	if ownerUid == uid and (now - start) <= tokenTimeout and (now - os.path.getctime(delFile)) <= tokenTimeout:
 		# disallow logging in by deleting principal
 		try:
 			await kadm.getPrincipal (user)
