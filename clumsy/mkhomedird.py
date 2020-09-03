@@ -35,6 +35,8 @@ async def touchHome (request, user):
 	User must exist and have a valid, but nonexistent homedir set
 	"""
 
+	config = request.app.config
+
 	if user in running:
 		# XXX: wait for response and return it
 		return response.json ({'status': 'in_progress'}, status=202)
@@ -46,6 +48,8 @@ async def touchHome (request, user):
 		except KeyError:
 			return response.json ({'status': 'user_not_found'}, status=404)
 		homedir = userdata['homedir']
+		sharedPath = config.SHARED_PATH
+		sharedDir = os.path.join(sharedPath, userdata['name'] + '/')
 		logger.debug (f'home is {homedir}')
 		# make sure all dirs end with / (for rsync)
 		if not homedir.endswith ('/'):
@@ -64,17 +68,24 @@ async def touchHome (request, user):
 		if ret != 0:
 			return response.json ({'status': 'copy_skeleton_failed'}, status=500)
 
+		# create sharedDir and copy homedir to sharedDir
+		try:
+                        shutil.copytree(homedir, sharedDir)
+		except FileExistsError:
+                        return response.json ({'status': 'copy_shared_dir_failed'})
+
 		# make sure the directory has proper permissions after rsync messes them up
 		os.chmod (homedir, mode)
+		os.chmod (sharedDir, mode)
 	finally:
 		running.remove (user)
 
 	return response.json ({'status': 'ok'}, status=201)
 
 def remove_readonly(func, path, _):
-    "Clear the readonly bit and reattempt the removal"
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
+	"Clear the readonly bit and reattempt the removal"
+	os.chmod(path, stat.S_IWRITE)
+	func(path)
 
 @bp.route ('/<user>', methods=['DELETE'])
 async def deleteHome (request, user):
@@ -87,7 +98,9 @@ async def deleteHome (request, user):
 	XXX: make sure homedir fits a certain pattern (to avoid arbitrary dir deletion)
 	"""
 
+	config = request.app.config
 	token = request.args.get ('token')
+	sharedPath = config.SHARED_PATH
 
 	if not token:
 		# get a new token
@@ -124,6 +137,12 @@ async def deleteHome (request, user):
 		for d in (userdata['homedir'], f'/var/guix/profiles/per-user/{user}'):
 			if os.path.exists (d):
 				logger.debug (f'deleting directory {d}')
+				shutil.rmtree (d, onerror=remove_readonly)
+
+		sharedDir = os.path.join(sharedPath, userdata['name'] + '/')
+		for d in (sharedDir, f'/var/guix/profiles/per-user/{user}'):
+			if os.path.exists (d):
+				logger.debug (f'deleting shared directory {d}')
 				shutil.rmtree (d, onerror=remove_readonly)
 
 		return response.json ({'status': 'ok'})
