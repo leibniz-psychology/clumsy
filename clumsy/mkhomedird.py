@@ -49,7 +49,7 @@ async def touchHome (request, user):
 			return response.json ({'status': 'user_not_found'}, status=404)
 		homedir = userdata['homedir']
 		sharedPath = config.SHARED_PATH
-		sharedDir = os.path.join(sharedPath, userdata['name'] + '/')
+		sharedDir = os.path.join(sharedPath, userdata['name'])
 		logger.debug (f'home is {homedir}')
 		# make sure all dirs end with / (for rsync)
 		if not homedir.endswith ('/'):
@@ -76,7 +76,7 @@ async def touchHome (request, user):
 
 		# make sure the directory has proper permissions after rsync messes them up
 		os.chmod (homedir, mode)
-		os.chmod (sharedDir, mode)
+		os.chmod (sharedDir, mode=0o755)
 	finally:
 		running.remove (user)
 
@@ -134,15 +134,10 @@ async def deleteHome (request, user):
 		except KeyError:
 			pass
 
-		for d in (userdata['homedir'], f'/var/guix/profiles/per-user/{user}'):
+		sharedDir = os.path.join(sharedPath, userdata['name'])
+		for d in (userdata['homedir'], sharedDir, f'/var/guix/profiles/per-user/{user}'):
 			if os.path.exists (d):
 				logger.debug (f'deleting directory {d}')
-				shutil.rmtree (d, onerror=remove_readonly)
-
-		sharedDir = os.path.join(sharedPath, userdata['name'] + '/')
-		for d in (sharedDir, f'/var/guix/profiles/per-user/{user}'):
-			if os.path.exists (d):
-				logger.debug (f'deleting shared directory {d}')
 				shutil.rmtree (d, onerror=remove_readonly)
 
 		return response.json ({'status': 'ok'})
