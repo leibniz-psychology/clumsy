@@ -72,7 +72,7 @@ async def touchHome (request, user):
 		try:
 			os.mkdir (sharedDir, mode=0o755)
 		except FileExistsError:
-                        return response.json ({'status': 'shared_dir_exists'})
+			return response.json ({'status': 'shared_dir_exists'})
 
 		# make sure the directory has proper permissions after rsync messes them up
 		os.chmod (homedir, mode)
