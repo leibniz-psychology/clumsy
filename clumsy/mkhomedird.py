@@ -71,6 +71,7 @@ async def touchHome (request, user):
 		# create sharedDir and copy homedir to sharedDir
 		try:
 			os.mkdir (sharedDir, mode=0o755)
+			os.chown (sharedDir, userdata["uid"], userdata["gid"])
 		except FileExistsError:
 			return response.json ({'status': 'shared_dir_exists'})
 
