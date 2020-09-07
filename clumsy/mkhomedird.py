@@ -48,8 +48,6 @@ async def touchHome (request, user):
 		except KeyError:
 			return response.json ({'status': 'user_not_found'}, status=404)
 		homedir = userdata['homedir']
-		sharedPath = config.SHARED_PATH
-		sharedDir = os.path.join(sharedPath, userdata['name'])
 		logger.debug (f'home is {homedir}')
 		# make sure all dirs end with / (for rsync)
 		if not homedir.endswith ('/'):
@@ -68,16 +66,16 @@ async def touchHome (request, user):
 		if ret != 0:
 			return response.json ({'status': 'copy_skeleton_failed'}, status=500)
 
-		# create sharedDir and copy homedir to sharedDir
+		# make sure the directory has proper permissions after rsync messes them up
+		os.chmod (homedir, mode)
+
+		# create shared directory
+		sharedDir = os.path.join (config.SHARED_PATH, userdata['name'])
 		try:
-			os.mkdir (sharedDir, mode=0o755)
+			os.mkdir (sharedDir, mode=mode)
 			os.chown (sharedDir, userdata["uid"], userdata["gid"])
 		except FileExistsError:
 			return response.json ({'status': 'shared_dir_exists'})
-
-		# make sure the directory has proper permissions after rsync messes them up
-		os.chmod (homedir, mode)
-		os.chmod (sharedDir, mode=0o755)
 	finally:
 		running.remove (user)
 
@@ -101,7 +99,6 @@ async def deleteHome (request, user):
 
 	config = request.app.config
 	token = request.args.get ('token')
-	sharedPath = config.SHARED_PATH
 
 	if not token:
 		# get a new token
@@ -135,7 +132,7 @@ async def deleteHome (request, user):
 		except KeyError:
 			pass
 
-		sharedDir = os.path.join(sharedPath, userdata['name'])
+		sharedDir = os.path.join(config.SHARED_PATH, userdata['name'])
 		for d in (userdata['homedir'], sharedDir, f'/var/guix/profiles/per-user/{user}'):
 			if os.path.exists (d):
 				logger.debug (f'deleting directory {d}')
