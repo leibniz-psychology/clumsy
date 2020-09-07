@@ -70,9 +70,9 @@ async def touchHome (request, user):
 
 		# create sharedDir and copy homedir to sharedDir
 		try:
-                        shutil.copytree(homedir, sharedDir)
+			os.mkdir (sharedDir, mode=0o755)
 		except FileExistsError:
-                        return response.json ({'status': 'copy_shared_dir_failed'})
+                        return response.json ({'status': 'shared_dir_exists'})
 
 		# make sure the directory has proper permissions after rsync messes them up
 		os.chmod (homedir, mode)
