@@ -35,6 +35,8 @@ async def touchHome (request, user):
 	User must exist and have a valid, but nonexistent homedir set
 	"""
 
+	config = request.app.config
+
 	if user in running:
 		# XXX: wait for response and return it
 		return response.json ({'status': 'in_progress'}, status=202)
@@ -66,15 +68,23 @@ async def touchHome (request, user):
 
 		# make sure the directory has proper permissions after rsync messes them up
 		os.chmod (homedir, mode)
+
+		# create shared directory
+		sharedDir = os.path.join (config.SHARED_PATH, userdata['name'])
+		try:
+			os.mkdir (sharedDir, mode=mode)
+			os.chown (sharedDir, userdata["uid"], userdata["gid"])
+		except FileExistsError:
+			return response.json ({'status': 'shared_dir_exists'})
 	finally:
 		running.remove (user)
 
 	return response.json ({'status': 'ok'}, status=201)
 
 def remove_readonly(func, path, _):
-    "Clear the readonly bit and reattempt the removal"
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
+	"Clear the readonly bit and reattempt the removal"
+	os.chmod(path, stat.S_IWRITE)
+	func(path)
 
 @bp.route ('/<user>', methods=['DELETE'])
 async def deleteHome (request, user):
@@ -87,6 +97,7 @@ async def deleteHome (request, user):
 	XXX: make sure homedir fits a certain pattern (to avoid arbitrary dir deletion)
 	"""
 
+	config = request.app.config
 	token = request.args.get ('token')
 
 	if not token:
@@ -121,7 +132,8 @@ async def deleteHome (request, user):
 		except KeyError:
 			pass
 
-		for d in (userdata['homedir'], f'/var/guix/profiles/per-user/{user}'):
+		sharedDir = os.path.join(config.SHARED_PATH, userdata['name'])
+		for d in (userdata['homedir'], sharedDir, f'/var/guix/profiles/per-user/{user}'):
 			if os.path.exists (d):
 				logger.debug (f'deleting directory {d}')
 				shutil.rmtree (d, onerror=remove_readonly)
