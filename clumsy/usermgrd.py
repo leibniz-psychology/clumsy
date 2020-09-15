@@ -159,7 +159,7 @@ async def addUser (request, rollback):
 	o['uid'] = user
 	o['uidNumber'] = uid
 	o['gidNumber'] = gid
-	o['homeDirectory'] = f'/home/{user}'
+	o['homeDirectory'] = config.HOME_TEMPLATE.format (user=user)
 	o['loginShell'] = '/bin/bash'
 	try:
 		logger.debug (f'adding user {o} to ldap')
