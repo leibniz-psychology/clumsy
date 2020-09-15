@@ -140,7 +140,7 @@ async def addUser (request, rollback):
 	if not uid:
 		raise ServerError ({'status': 'uid'})
 
-	o = bonsai.LDAPEntry (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
+	o = bonsai.LDAPEntry(config.LDAP_ENTRY_PEOPLE.format (user=user))
 	o['objectClass'] = [
 			'top',
 			'person',
@@ -159,7 +159,7 @@ async def addUser (request, rollback):
 	o['uid'] = user
 	o['uidNumber'] = uid
 	o['gidNumber'] = gid
-	o['homeDirectory'] = f'/home/{user}'
+	o['homeDirectory'] = config.HOME_TEMPLATE.format (user=user)
 	o['loginShell'] = '/bin/bash'
 	try:
 		logger.debug (f'adding user {o} to ldap')
@@ -170,7 +170,7 @@ async def addUser (request, rollback):
 	except bonsai.errors.AlreadyExists:
 		raise ServerError ({'status': 'user_exists'})
 
-	o = bonsai.LDAPEntry (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
+	o = bonsai.LDAPEntry (config.LDAP_ENTRY_GROUP.format (user=user))
 	o['objectClass'] = ['top', 'posixGroup']
 	o['cn'] = user
 	o['gidNumber'] = gid
@@ -284,8 +284,8 @@ async def deleteUser (request, user):
 				raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
 
 		try:
-			await ldapc.delete (f"uid={user},ou=people,dc=compute,dc=zpid,dc=de")
-			await ldapc.delete (f"cn={user},ou=group,dc=compute,dc=zpid,dc=de")
+			await ldapc.delete (config.LDAP_ENTRY_PEOPLE.format (user=user))
+			await ldapc.delete (config.LDAP_ENTRY_GROUP.format (user=user))
 		except LDAPError as e:
 			raise ServerError ({'status': 'ldap', 'ldap_status': str (e), 'ldap_code': e.code})
 
