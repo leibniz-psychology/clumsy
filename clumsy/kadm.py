@@ -23,8 +23,14 @@ class KAdm:
 		# just for testing
 		self.env = env
 
-	async def addPrincipal (self, name, password):
-		cmd = self.commonArgs + ['add_principal', '+requires_preauth', '-allow_svr', name]
+	async def addPrincipal (self, name, password, expire='never'):
+		cmd = self.commonArgs + [
+				'add_principal',
+				'+requires_preauth',
+				'-allow_svr',
+				'-expire', expire,
+				name,
+				]
 		logger.debug (' '.join (cmd))
 		proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=self.env)
 

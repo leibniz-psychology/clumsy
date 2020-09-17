@@ -204,7 +204,7 @@ async def addUser (request, rollback):
 	try:
 		logger.debug (f'adding kerberos user {user}')
 		password = randomSecret (32)
-		await kadm.addPrincipal (user, password)
+		await kadm.addPrincipal (user, password, expire=config.KERBEROS_EXPIRE)
 		rollback.push_async_callback (kadm.deletePrincipal, user)
 	except KAdmException:
 		raise ServerError ({'status': 'kerberos_failed'})
