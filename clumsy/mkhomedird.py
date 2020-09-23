@@ -20,12 +20,24 @@ def randomSecret (n=32):
 
 running = set ()
 deleteToken = dict ()
-skeldir = '/etc/skel/'
-
-if not skeldir.endswith ('/'):
-	skeldir += '/'
 
 bp = Blueprint('mkhomedird')
+
+async def copyDir (a, b, uid, gid):
+	"""
+	Copy directory a to b using rsync
+	"""
+	def addSlash (x):
+		return x if x.endswith ('/') else x+'/'
+
+	# make sure dirs end with / for rsync
+	a = addSlash (a)
+	b = addSlash (b)
+	cmd = ['rsync', '-av', f'--chown={uid}:{gid}', a, b]
+	logger.debug (' '.join (cmd))
+	proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL)
+	ret = await proc.wait ()
+	return ret == 0
 
 @bp.route ('/<user>', methods=['POST'])
 async def touchHome (request, user):
@@ -47,35 +59,27 @@ async def touchHome (request, user):
 			userdata = getUser (user)
 		except KeyError:
 			return response.json ({'status': 'user_not_found'}, status=404)
-		homedir = userdata['homedir']
-		logger.debug (f'home is {homedir}')
-		# make sure all dirs end with / (for rsync)
-		if not homedir.endswith ('/'):
-			homedir += '/'
 
 		mode = 0o750
-		try:
-			os.mkdir (homedir, mode=mode)
-		except FileExistsError:
-			return response.json ({'status': 'homedir_exists'}, status=409)
+		for d, settings in config.DIRECTORIES.items ():
+			d = d.format (**userdata)
+			create = settings.get ('create', False)
+			if not create:
+				continue
 
-		cmd = ['rsync', '-av', f'--chown={userdata["uid"]}:{userdata["gid"]}', skeldir, homedir]
-		logger.debug (' '.join (cmd))
-		proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL)
-		ret = await proc.wait ()
-		if ret != 0:
-			return response.json ({'status': 'copy_skeleton_failed'}, status=500)
+			logger.debug (f'creating directory {d} with {settings}')
+			try:
+				os.mkdir (d, mode=mode)
+				os.chown (d, userdata["uid"], userdata["gid"])
+			except FileExistsError:
+				return response.json ({'status': 'homedir_exists'}, status=409)
 
-		# make sure the directory has proper permissions after rsync messes them up
-		os.chmod (homedir, mode)
+			if isinstance (create, str):
+				if not await copyDir (create, d, userdata['uid'], userdata['gid']):
+					return response.json ({'status': 'copy_skeleton_failed'}, status=500)
+				# make sure the directory has proper permissions after rsync messes them up
+				os.chmod (d, mode)
 
-		# create shared directory
-		sharedDir = os.path.join (config.SHARED_PATH, userdata['name'])
-		try:
-			os.mkdir (sharedDir, mode=mode)
-			os.chown (sharedDir, userdata["uid"], userdata["gid"])
-		except FileExistsError:
-			return response.json ({'status': 'shared_dir_exists'})
 	finally:
 		running.remove (user)
 
@@ -132,8 +136,8 @@ async def deleteHome (request, user):
 		except KeyError:
 			pass
 
-		sharedDir = os.path.join(config.SHARED_PATH, userdata['name'])
-		for d in (userdata['homedir'], sharedDir, f'/var/guix/profiles/per-user/{user}'):
+		dirs = map (lambda x: x.format (**userdata), config.DIRECTORIES.keys ())
+		for d in dirs:
 			if os.path.exists (d):
 				logger.debug (f'deleting directory {d}')
 				shutil.rmtree (d, onerror=remove_readonly)
