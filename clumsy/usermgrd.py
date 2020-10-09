@@ -109,7 +109,8 @@ def possibleUsernames (userdata, minlen=3, maxlen=16):
 	r = re.compile (r'[^a-z0-9]')
 	for u in generate (maxlen):
 		u = r.sub ('', u.lower ())
-		if len (u) >= minlen:
+		# usernames must be reasonably long and cannot start with a digit
+		if len (u) >= minlen and u[0].isalpha ():
 			yield u
 
 def findUnused (it):

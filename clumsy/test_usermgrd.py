@@ -48,3 +48,9 @@ def test_possibleUsernames ():
 			firstName='MyLongFirstName',
 			lastName='MyLongLastName'), maxlen=10))[0:4] == ['veryverylo', 'mmylonglas', 'veryveryl1', 'mmylongla1']
 
+	# no numbers
+	assert list (possibleUsernames (UserInfo (
+			username='0123456789',
+			firstName='Joe',
+			lastName='User'), maxlen=10))[0] == 'juser'
+
