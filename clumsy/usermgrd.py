@@ -7,6 +7,7 @@ Users must be local to the system this service is running on.
 import secrets, bonsai, random, functools, re, asyncio, os, time
 from contextlib import AsyncExitStack
 from collections import namedtuple
+from subprocess import call
 
 import aiohttp
 from sanic import Blueprint, response
@@ -240,6 +241,8 @@ async def deleteUser (request, user):
 	now = time.time ()
 	# in seconds
 	tokenTimeout = 60
+	sharedDir = '/storage/public'
+	homeDir = '/storage/home'
 
 	try:
 		res = getUser (user)
@@ -278,6 +281,13 @@ async def deleteUser (request, user):
 		except KAdmException:
 			raise ServerError ({'status': 'kerberos_failed'})
 
+		# revoke ACL while deleting the user
+		rc1 = call(['setfacl', '-R', '-x', f'u:{delUser}', f'{homeDir}'])
+		rc2 = call(['setfacl', '-R', '-x', f'g:{delUser}', f'{homeDir}'])
+		rc3 = call(['setfacl', '-R', '-x', f'u:{delUser}', f'{sharedDir}'])
+		rc4 = call(['setfacl', '-R', '-x', f'g:{delUser}', f'{sharedDir}'])
+		if rc1 != 0 or rc2 != 0 or rc3 != 0 or rc4 != 0:
+			return response.json ({'status': 'Revoke ACL error'})
 		# mark homedir for deletion
 		async with homedirsession.delete (f'http://localhost/{user}') as resp:
 			deldata = await resp.json ()
