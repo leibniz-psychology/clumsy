@@ -24,11 +24,12 @@ Create and delete user accounts on behalf of other daemons.
 Users must be local to the system this service is running on.
 """
 
-import secrets, bonsai, random, functools, re, asyncio, os, time
+import secrets, random, functools, re, asyncio, os, time
 from contextlib import AsyncExitStack
 from collections import namedtuple
 
 import aiohttp
+import bonsai
 from sanic import Blueprint, response
 from sanic.log import logger
 from sanic.exceptions import ServerError, Forbidden, NotFound
@@ -37,7 +38,7 @@ from unidecode import unidecode
 from .nss import getUser
 from .kadm import KAdm, KAdmException
 
-ldapc = None
+client = None
 kadm = None
 flushsession = None
 homedirsession = None
@@ -69,13 +70,12 @@ bp = Blueprint('usermgrd')
 
 @bp.listener('before_server_start')
 async def setup (app, loop):
-	global ldapc, kadm, flushsession, homedirsession
+	global client, kadm, flushsession, homedirsession
 
 	config = app.config
 
 	client = bonsai.LDAPClient (config.LDAP_SERVER)
 	client.set_credentials ("SIMPLE", user=config.LDAP_USER, password=config.LDAP_PASSWORD)
-	ldapc = await client.connect (is_async=True)
 
 	kadm = KAdm (config.KERBEROS_USER, config.KERBEROS_KEYTAB)
 
@@ -86,7 +86,6 @@ async def setup (app, loop):
 async def teardown (app, loop):
 	await flushsession.close ()
 	await homedirsession.close ()
-	ldapc.close ()
 
 def withRollback (func):
 	"""
@@ -161,6 +160,7 @@ async def addUser (request, rollback):
 	if not uid:
 		raise ServerError ({'status': 'uid'})
 
+	conn = await client.connect (is_async=True)
 	o = bonsai.LDAPEntry(config.LDAP_ENTRY_PEOPLE.format (user=user))
 	o['objectClass'] = [
 			'top',
@@ -184,7 +184,7 @@ async def addUser (request, rollback):
 	o['loginShell'] = '/bin/bash'
 	try:
 		logger.debug (f'adding user {o} to ldap')
-		await ldapc.add (o)
+		await conn.add (o)
 		# LIFO -> flush cache last
 		rollback.push_async_callback (flushUserCache)
 		rollback.push_async_callback (o.delete)
@@ -198,10 +198,11 @@ async def addUser (request, rollback):
 	o['memberUid'] = user
 	try:
 		logger.debug (f'adding group {o} to ldap')
-		await ldapc.add (o)
+		await conn.add (o)
 		rollback.push_async_callback (o.delete)
 	except bonsai.errors.AlreadyExists:
 		raise ServerError ({'status': 'group_exists'})
+	conn.close ()
 
 	# flush and sanity check to make sure the user actually exists now and
 	# is resolvable in both directions (user->uid; uid->user)
@@ -304,11 +305,10 @@ async def deleteUser (request, user):
 			if deldata['status'] != 'again':
 				raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
 
-		try:
-			await ldapc.delete (config.LDAP_ENTRY_PEOPLE.format (user=user))
-			await ldapc.delete (config.LDAP_ENTRY_GROUP.format (user=user))
-		except LDAPError as e:
-			raise ServerError ({'status': 'ldap', 'ldap_status': str (e), 'ldap_code': e.code})
+		conn = await client.connect (is_async=True)
+		await conn.delete (config.LDAP_ENTRY_PEOPLE.format (user=user))
+		await conn.delete (config.LDAP_ENTRY_GROUP.format (user=user))
+		conn.close ()
 
 		await flushUserCache ()
 
