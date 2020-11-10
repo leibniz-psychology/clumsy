@@ -50,7 +50,16 @@ def main ():
 				logger.error (format_exc ())
 				return json ({'status': 'bug'}, status=500)
 
-		sock = socket.socket (socket.AF_UNIX)
+		args = {}
+		try:
+			if config.DEBUG:
+				args['debug'] = True
+				args['auto_reload'] = True
+		except AttributeError:
+			# no debugging then
+			pass
+
+		args['sock'] = sock = socket.socket (socket.AF_UNIX)
 		if os.path.exists (config.SOCKET):
 			os.unlink (config.SOCKET)
 		sock.bind (config.SOCKET)
@@ -64,7 +73,7 @@ def main ():
 		# XXX: systemd?
 		#lockdown_account ('nobody', 'nobody', ['chown'])
 
-		app.run (sock=sock)
+		app.run (**args)
 	else:
 		logging.basicConfig (level=logging.INFO)
 		asyncio.run (modulebp ())
