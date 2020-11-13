@@ -22,6 +22,9 @@ kadm = None
 flushsession = None
 homedirsession = None
 delToken = dict ()
+revokeAclThread = None
+sharedDir = '/storage/public'
+homeDir = '/storage/home'
 
 def randomSecret (n):
 	alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -45,11 +48,18 @@ async def flushUserCache ():
 	except aiohttp.ClientError:
 		raise ServerError ({'status': 'nscdflushd_connect'})
 
+# revoke ACL while deleting the user
+async def revokeAcl (uid, gid):
+	proc = await asyncio.create_subprocess_exec ('setfacl', '-R', '-x', f'u:{uid}', '-x', f'g:{gid}', f'{homeDir}', f'{sharedDir}',
+                                              stdout=asyncio.subprocess.PIPE,
+                                              stderr=asyncio.subprocess.PIPE)
+	stdout, stderr = await proc.communicate()
+
 bp = Blueprint('usermgrd')
 
 @bp.listener('before_server_start')
 async def setup (app, loop):
-	global ldapc, kadm, flushsession, homedirsession
+	global ldapc, kadm, flushsession, homedirsession, revokeAclThread
 
 	config = app.config
 
@@ -67,6 +77,12 @@ async def teardown (app, loop):
 	await flushsession.close ()
 	await homedirsession.close ()
 	ldapc.close ()
+	if revokeAclThread:
+		revokeAclThread.cancel()
+		try:
+			await revokeAclThread
+		except asyncio.CancelledError:
+			pass
 
 def withRollback (func):
 	"""
@@ -237,15 +253,15 @@ async def deleteUser (request, user):
 	owner = None
 	start = 0.0
 	uid = 0
+	gid = 0
 	now = time.time ()
 	# in seconds
 	tokenTimeout = 60
-	sharedDir = '/storage/public'
-	homeDir = '/storage/home'
 
 	try:
 		res = getUser (user)
 		uid = res['uid']
+		gid = res['gid']
 		delUser = res['name']
 	except KeyError:
 		raise NotFound ({'status': 'user_not_found'})
@@ -280,15 +296,6 @@ async def deleteUser (request, user):
 		except KAdmException:
 			raise ServerError ({'status': 'kerberos_failed'})
 
-		# revoke ACL while deleting the user
-		proc = await asyncio.create_subprocess_exec ('setfacl', '-R', '-x', f'u:{delUser}', f'{homeDir}',
-                                               'setfacl', '-R', '-x', f'g:{delUser}', f'{homeDir}',
-                                               'setfacl', '-R', '-x', f'u:{delUser}', f'{sharedDir}',
-                                               'setfacl', '-R', '-x', f'g:{delUser}', f'{sharedDir}',
-                                               stdout=asyncio.subprocess.PIPE,
-                                               stderr=asyncio.subprocess.PIPE)
-		stdout, stderr = await proc.communicate()
-
 		# mark homedir for deletion
 		async with homedirsession.delete (f'http://localhost/{user}') as resp:
 			deldata = await resp.json ()
@@ -309,6 +316,7 @@ async def deleteUser (request, user):
 			if deldata['status'] != 'ok':
 				raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
 
+		revokeAclThread = asyncio.ensure_future (revokeAcl (uid, gid))
 		return response.json ({'status': 'ok'})
 	else:
 		# user did not prove he is allowed to do this
