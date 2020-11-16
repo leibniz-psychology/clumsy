@@ -5,9 +5,8 @@ setup(
     version='0.1',
     author='Lars-Dominik Braun',
     author_email='ldb@leibniz-psychology.org',
-    #url='https://',
+    url='https://github.com/leibniz-psychology/clumsy',
     packages=['clumsy'],
-    #license='LICENSE.txt',
     description='Cluster Management System',
     #long_description=open('README.rst').read(),
     long_description_content_type='text/x-rst',
@@ -22,7 +21,7 @@ setup(
     tests_require=[
         'pytest',
         'pytest-asyncio',
-		'pytest-cov',
+        'pytest-cov',
     ],
     python_requires='>=3.7',
     entry_points={
@@ -30,4 +29,11 @@ setup(
             'clumsy = clumsy.cli:main',
             ],
     },
+    classifiers = [
+        'License :: OSI Approved :: MIT License',
+        'Development Status :: 4 - Beta',
+        'Operating System :: POSIX :: Linux',
+        'Programming Language :: Python :: 3',
+        'Topic :: System :: Systems Administration',
+        ],
 )
