@@ -43,7 +43,6 @@ kadm = None
 flushsession = None
 homedirsession = None
 delToken = dict ()
-revokeAclThread = None
 sharedDir = '/storage/public'
 homeDir = '/storage/home'
 
@@ -80,7 +79,7 @@ bp = Blueprint('usermgrd')
 
 @bp.listener('before_server_start')
 async def setup (app, loop):
-	global client, kadm, flushsession, homedirsession, revokeAclThread
+	global client, kadm, flushsession, homedirsession
 
 	config = app.config
 
@@ -96,12 +95,6 @@ async def setup (app, loop):
 async def teardown (app, loop):
 	await flushsession.close ()
 	await homedirsession.close ()
-	if revokeAclThread:
-		revokeAclThread.cancel()
-		try:
-			await revokeAclThread
-		except asyncio.CancelledError:
-			pass
 
 def withRollback (func):
 	"""
