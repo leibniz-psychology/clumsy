@@ -1,15 +1,15 @@
 # Copyright 2019–2020 Leibniz Institute for Psychology
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
 # in the Software without restriction, including without limitation the rights
 # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in
 # all copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -43,6 +43,8 @@ kadm = None
 flushsession = None
 homedirsession = None
 delToken = dict ()
+sharedDir = '/storage/public'
+homeDir = '/storage/home'
 
 def randomSecret (n):
 	alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -65,6 +67,13 @@ async def flushUserCache ():
 				raise ServerError ({'status': 'flush_failed', 'nscdflush_status': deldata['status']})
 	except aiohttp.ClientError:
 		raise ServerError ({'status': 'nscdflushd_connect'})
+
+# revoke ACL while deleting the user
+async def revokeAcl (uid, gid):
+	proc = await asyncio.create_subprocess_exec ('setfacl', '-R', '-x', f'u:{uid}', '-x', f'g:{gid}', f'{homeDir}', f'{sharedDir}',
+                                              stdout=asyncio.subprocess.PIPE,
+                                              stderr=asyncio.subprocess.PIPE)
+	stdout, stderr = await proc.communicate()
 
 bp = Blueprint('usermgrd')
 
@@ -258,6 +267,7 @@ async def deleteUser (request, user):
 	owner = None
 	start = 0.0
 	uid = 0
+	gid = 0
 	now = time.time ()
 	# in seconds
 	tokenTimeout = 60
@@ -265,6 +275,7 @@ async def deleteUser (request, user):
 	try:
 		res = getUser (user)
 		uid = res['uid']
+		gid = res['gid']
 		delUser = res['name']
 	except KeyError:
 		raise NotFound ({'status': 'user_not_found'})
@@ -318,6 +329,7 @@ async def deleteUser (request, user):
 			if deldata['status'] != 'ok':
 				raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
 
+		asyncio.ensure_future (revokeAcl (uid, gid))
 		return response.json ({'status': 'ok'})
 	else:
 		# user did not prove he is allowed to do this
