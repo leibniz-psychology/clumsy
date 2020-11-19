@@ -1,6 +1,7 @@
 (define-module (clusmy)
   #:use-module ((guix licenses) #:prefix license:)
   #:use-module (gnu packages)
+  #:use-module (gnu packages acl)
   #:use-module (gnu packages openldap)
   #:use-module (gnu packages python-web)
   #:use-module (gnu packages python-xyz)
@@ -20,8 +21,16 @@
   (version "0.1")
   (source (local-file %source-dir #:recursive? #t))
   (build-system python-build-system)
-  ;; cannot run tests, they depend on local user accounts
-  (arguments `(#:tests? #f))
+  (arguments
+   ;; cannot run tests, they depend on local user accounts
+   `(#:tests? #f
+     #:phases
+     (modify-phases %standard-phases
+       (add-after 'unpack 'patch-paths
+         (lambda* (#:key inputs native-inputs #:allow-other-keys)
+           (substitute* "clumsy/usermgrd.py"
+             (("'setfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/setfacl'"))))))))
+  (inputs `(("acl" ,acl)))
   (propagated-inputs
    `(("python-sanic" ,python-sanic)
      ("python-aiohttp" ,python-aiohttp)
