@@ -336,7 +336,7 @@ async def deleteUser (request, user):
 			if deldata['status'] != 'ok':
 				raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
 
-		revokeAclThread = asyncio.ensure_future (revokeAcl (uid, gid))
+		asyncio.ensure_future (revokeAcl (uid, gid))
 		return response.json ({'status': 'ok'})
 	else:
 		# user did not prove he is allowed to do this
