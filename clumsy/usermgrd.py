@@ -178,7 +178,7 @@ async def addUser (request, rollback):
 			'inetOrgPerson',
 			'posixAccount',
 			'shadowAccount',
-			]
+			] + config.LDAP_EXTRA_CLASSES
 	# LDAP: person
 	o['sn'] = userdata.lastName
 	o['cn'] = user
