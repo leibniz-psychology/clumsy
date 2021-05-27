@@ -250,6 +250,9 @@ async def addUser (request, rollback):
 	except aiohttp.ClientError:
 		raise ServerError ({'status': 'mkhomedird_connect'})
 
+	logger.info (f'Created user {user} for '
+			f'{userdata.firstName} {userdata.lastName} ({userdata.email}) '
+			f'with UID/GID {uid}')
 	return response.json ({'status': 'ok', 'user': user, 'password': password, 'uid': uid, 'gid': uid}, status=201)
 
 @bp.route ('/<user>', methods=['DELETE'])
@@ -330,6 +333,8 @@ async def deleteUser (request, user):
 				raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
 
 		asyncio.ensure_future (revokeAcl (uid, gid))
+
+		logger.info (f'Deleted user {user}')
 		return response.json ({'status': 'ok'})
 	else:
 		# user did not prove he is allowed to do this
