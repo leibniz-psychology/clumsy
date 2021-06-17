@@ -24,7 +24,7 @@ Create and delete user accounts on behalf of other daemons.
 Users must be local to the system this service is running on.
 """
 
-import secrets, random, functools, re, asyncio, os, time
+import secrets, random, functools, re, asyncio, grp
 from contextlib import AsyncExitStack
 from collections import namedtuple
 
@@ -39,7 +39,7 @@ from .nss import getUser
 from .kadm import KAdm, KAdmException
 from .gssapi.server import authorized
 
-client = None
+ldapclient = None
 kadm = None
 flushsession = None
 homedirsession = None
@@ -79,12 +79,12 @@ bp = Blueprint('usermgrd')
 
 @bp.listener('before_server_start')
 async def setup (app, loop):
-	global client, kadm, flushsession, homedirsession
+	global ldapclient, kadm, flushsession, homedirsession
 
 	config = app.config
 
-	client = bonsai.LDAPClient (config.LDAP_SERVER)
-	client.set_credentials ("SIMPLE", user=config.LDAP_USER, password=config.LDAP_PASSWORD)
+	ldapclient = bonsai.LDAPClient (config.LDAP_SERVER)
+	ldapclient.set_credentials ("SIMPLE", user=config.LDAP_USER, password=config.LDAP_PASSWORD)
 
 	kadm = KAdm (config.KERBEROS_USER, config.KERBEROS_KEYTAB)
 
@@ -116,6 +116,12 @@ UserInfo = namedtuple ('UserInfo',
 		'email'],
 		defaults=[None]*6)
 
+def numberedVariants (prefixes, maxlen, n):
+	for postfix in [''] + list (range (1, n)):
+		for prefix in prefixes:
+			postfix = str (postfix)
+			yield f'{prefix[:maxlen-len (postfix)]}{postfix}'
+
 def possibleUsernames (userdata, minlen=3, maxlen=16):
 	"""
 	Create UNIX account names based on submitted user data
@@ -129,10 +135,7 @@ def possibleUsernames (userdata, minlen=3, maxlen=16):
 		# otherwise use the actual name
 		if userdata.firstName and userdata.lastName:
 			prefixes.append ((unidecode (userdata.firstName)[0] + unidecode (userdata.lastName)))
-		for postfix in [''] + list (range (1, 10)):
-			for prefix in prefixes:
-				postfix = str (postfix)
-				yield f'{prefix[:maxlen-len (postfix)]}{postfix}'
+		yield from numberedVariants (prefixes, maxlen, 100)
 
 	r = re.compile (r'[^a-z0-9]')
 	for u in generate (maxlen):
@@ -141,7 +144,7 @@ def possibleUsernames (userdata, minlen=3, maxlen=16):
 		if len (u) >= minlen and u[0].isalpha ():
 			yield u
 
-def findUnused (it):
+def findUnusedUser (it):
 	""" From iterator it find unused user or user id """
 	for u in it:
 		try:
@@ -150,7 +153,7 @@ def findUnused (it):
 			return u
 	return None
 
-@bp.route ('/', methods=['POST'])
+@bp.route ('/user', methods=['POST'])
 # @authorize is not async, but I’m not aware of any async gssapi module -.-
 @authorized('KERBEROS_USER')
 @withRollback
@@ -165,17 +168,17 @@ async def addUser (request, rollback, user):
 	userdata = UserInfo (**form)
 
 	# make sure the sanitized usernames are >= 3 characters long
-	user = findUnused (possibleUsernames (userdata))
+	user = findUnusedUser (possibleUsernames (userdata))
 	if not user:
 		raise ServerError ({'status': 'username'})
 
-	uid = gid = findUnused ([random.randrange (config.MIN_UID, config.MAX_UID) \
+	uid = gid = findUnusedUser ([random.randrange (config.MIN_UID, config.MAX_UID) \
 			for i in range (100)])
 	if not uid:
 		raise ServerError ({'status': 'uid'})
 
-	conn = await client.connect (is_async=True)
-	o = bonsai.LDAPEntry(config.LDAP_ENTRY_PEOPLE.format (user=user))
+	conn = await ldapclient.connect (is_async=True)
+	o = bonsai.LDAPEntry(f'uid={user},{config.LDAP_BASE_PEOPLE}')
 	o['objectClass'] = [
 			'top',
 			'person',
@@ -205,7 +208,7 @@ async def addUser (request, rollback, user):
 	except bonsai.errors.AlreadyExists:
 		raise ServerError ({'status': 'user_exists'})
 
-	o = bonsai.LDAPEntry (config.LDAP_ENTRY_GROUP.format (user=user))
+	o = bonsai.LDAPEntry (f'cn={user},{config.LDAP_BASE_GROUP}')
 	o['objectClass'] = ['top', 'posixGroup']
 	o['cn'] = user
 	o['gidNumber'] = gid
@@ -260,7 +263,7 @@ async def addUser (request, rollback, user):
 			f'with UID/GID {uid}')
 	return response.json ({'status': 'ok', 'user': user, 'password': password, 'uid': uid, 'gid': uid}, status=201)
 
-@bp.route ('/', methods=['DELETE'])
+@bp.route ('/user', methods=['DELETE'])
 @authorized('KERBEROS_USER')
 async def deleteUser (request, user):
 	"""
@@ -300,9 +303,9 @@ async def deleteUser (request, user):
 		if deldata['status'] != 'again':
 			raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
 
-	conn = await client.connect (is_async=True)
-	await conn.delete (config.LDAP_ENTRY_PEOPLE.format (user=user))
-	await conn.delete (config.LDAP_ENTRY_GROUP.format (user=user))
+	conn = await ldapclient.connect (is_async=True)
+	await conn.delete (f'uid={user},{config.LDAP_BASE_PEOPLE}')
+	await conn.delete (f'cn={user},{config.LDAP_BASE_GROUP}')
 	conn.close ()
 
 	await flushUserCache ()
@@ -316,5 +319,233 @@ async def deleteUser (request, user):
 	asyncio.ensure_future (revokeAcl (uid, gid))
 
 	logger.info (f'Deleted user {user}')
+	return response.json ({'status': 'ok'})
+
+def findUnusedGroup (it):
+	""" From iterator it find unused group or group id """
+	for u in it:
+		try:
+			if isinstance (u, str):
+				res = grp.getgrnam (u)
+			elif isinstance (u, int):
+				res = grp.getgrgid (u)
+		except KeyError:
+			return u
+	return None
+
+def possibleGroupnames (owner, name, minlen=3, maxlen=32):
+	"""
+	Create valid UNIX group names based on submitted user data
+	"""
+
+	r = re.compile (r'[^a-z0-9-]')
+	owner = r.sub ('', owner.lower ())
+	name = r.sub ('', name.lower ())
+	for g in numberedVariants ([f'{owner}-{name}'], maxlen, 100):
+		# group names must be reasonably long and cannot start with a digit
+		if len (g) >= minlen and g[0].isalpha ():
+			yield g
+
+def ensureUser (username : str, config, error : str ='user_not_found'):
+	""" Ensure user exists and we are allowed to operate on it """
+	try:
+		user = getUser (username)
+		if not (config.MIN_UID <= user['uid'] < config.MAX_UID):
+			raise Forbidden ({'status': 'unauthorized'})
+		return user
+	except KeyError:
+		raise NotFound ({'status': error})
+
+@bp.route ('/group/<newGroupName>', methods=['POST'])
+@authorized('KERBEROS_USER')
+@withRollback
+async def addGroup (request, rollback, newGroupName, user):
+	""" Create a new group """
+
+	config = request.app.config
+
+	owner = ensureUser (user, config)
+
+	group = findUnusedGroup (possibleGroupnames (owner['name'], newGroupName))
+	if not group:
+		raise ServerError ({'status': 'groupname'})
+
+	gid = gid = findUnusedGroup ([random.randrange (config.MIN_GID, config.MAX_GID) \
+			for i in range (100)])
+	if not gid:
+		raise ServerError ({'status': 'gid'})
+
+	conn = await ldapclient.connect (is_async=True)
+	o = bonsai.LDAPEntry(f'cn={group},{config.LDAP_BASE_GROUP}')
+	o['objectClass'] = [
+			'top',
+			'posixGroup',
+			]
+	o['cn'] = group
+	o['gidNumber'] = gid
+	o['memberUid'] = owner['name']
+	try:
+		logger.debug (f'adding group {o} to ldap')
+		await conn.add (o)
+		# LIFO -> flush cache last
+		rollback.push_async_callback (flushUserCache)
+		rollback.push_async_callback (o.delete)
+	except bonsai.errors.AlreadyExists:
+		raise ServerError ({'status': 'group_exists'})
+
+	# flush and sanity check to make sure the group actually exists now and
+	# is resolvable in both directions (gid→name, name→gid)
+	ok = False
+	for i in range (60):
+		await flushUserCache ()
+
+		try:
+			resNam = grp.getgrnam (group)
+			resGid = grp.getgrgid (gid)
+			if resNam != resGid:
+				raise ServerError ({'status': 'group_mismatch'})
+			ok = True
+			break
+		except KeyError:
+			logger.debug (f'group {group}/{gid} not resolvable yet, retrying')
+			await asyncio.sleep (1)
+	if not ok:
+		raise ServerError ({'status': 'resolve_timeout'})
+
+	logger.info (f'Created group {group} for {owner["name"]} with GID {gid}')
+	return response.json ({
+			'status': 'ok',
+			'group': group,
+			'gid': gid,
+			'members': [getUser (u)['name'] for u in resGid.gr_mem],
+			}, status=201)
+
+def ensureGroup (name, config):
+	""" Ensure group exists and we are allowed to operate on it """
+	try:
+		group = grp.getgrnam (name)
+		if not (config.MIN_GID <= group.gr_gid < config.MAX_GID):
+			raise Forbidden ({'status': 'unauthorized'})
+		return group
+	except KeyError:
+		raise NotFound ({'status': 'nonexistent'})
+
+def ensureGroupMember (group : grp.struct_group, user : dict):
+	""" Ensure username is part of group. """
+
+	if user['name'] not in group.gr_mem:
+		raise Forbidden ({'status': 'not_a_member'})
+
+async def getLdapGroup (conn, config, name : str):
+	results = await conn.search (f'cn={name},{config.LDAP_BASE_GROUP}',
+			bonsai.LDAPSearchScope.BASE)
+	if len (results) != 1:
+		# should never happen
+		raise Forbidden (dict (status='inconsistent'))
+	results, = results
+	return results
+
+@bp.route ('/group/<modgroup>/<moduser>', methods=['POST'])
+@authorized('KERBEROS_USER')
+async def addUserToGroup (request, user, modgroup, moduser):
+	"""
+	Add user to existing group.
+	"""
+
+	config = request.app.config
+
+	modgroup = ensureGroup (modgroup, config)
+	gid = modgroup.gr_gid
+
+	user = ensureUser (user, config, 'you_do_not_exist_in_this_world')
+	moduser = ensureUser (moduser, config)
+
+	ensureGroupMember (modgroup, user)
+
+	conn = await ldapclient.connect (is_async=True)
+
+	results = await getLdapGroup (conn, config, modgroup.gr_name)
+	try:
+		results['memberUid'].append (moduser['name'])
+		await results.modify ()
+	except ValueError:
+		# User already in list. This is fine.
+		pass
+
+	conn.close ()
+
+	# flush and sanity check to make sure the user is now in the group
+	ok = False
+	for i in range (60):
+		await flushUserCache ()
+
+		res = grp.getgrnam (modgroup.gr_name)
+		if moduser['name'] in res.gr_mem:
+			logger.debug (f'User {moduser["name"]} in group {modgroup.gr_name} ({res.gr_mem}), moving on.')
+			ok = True
+			break
+		else:
+			logger.debug (f'User {moduser["name"]} not yet in group {modgroup.gr_name}, waiting.')
+			await asyncio.sleep (1)
+	if not ok:
+		raise ServerError ({'status': 'resolve_timeout'})
+
+	logger.info (f'Added user {moduser["name"]} to group {modgroup.gr_name}')
+	return response.json ({'status': 'ok'})
+
+@bp.route ('/group/<delgroup>', methods=['DELETE'])
+@authorized('KERBEROS_USER')
+async def deleteGroup (request, delgroup, user):
+	"""
+	Delete user from a group.
+	"""
+
+	config = request.app.config
+
+	delgroup = ensureGroup (delgroup, config)
+	user = ensureUser (user, config)
+
+	conn = await ldapclient.connect (is_async=True)
+
+	# make sure this is nobody’s primary group (it should not happen)
+	results = await conn.search (config.LDAP_BASE_PEOPLE,
+			bonsai.LDAPSearchScope.SUBTREE,
+			f'(gidHumber={delgroup.gr_gid})')
+	if len (results) > 0:
+		raise Forbidden (dict (status='primary_group'))
+
+	results = await getLdapGroup (conn, config, delgroup.gr_name)
+	try:
+		results['memberUid'].remove (user['name'])
+	except ValueError:
+		raise NotFound ({'status': 'not_a_member'})
+	if len (results['memberUid']) == 0:
+		await conn.delete (f'cn={delgroup.gr_name},{config.LDAP_BASE_GROUP}')
+		logger.info (f'Deleted group {delgroup.gr_name}')
+	else:
+		await results.modify ()
+		logger.info (f'Removed user {user["name"]} from group {delgroup.gr_name}')
+	conn.close ()
+
+	# flush and sanity check to make sure the user not in the group any more.
+	ok = False
+	for i in range (60):
+		await flushUserCache ()
+
+		# Either the group disappears (KeyError) or the membership does.
+		try:
+			res = grp.getgrnam (delgroup.gr_name)
+			if user['name'] not in res.gr_mem:
+				ok = True
+				break
+		except KeyError:
+			ok = True
+			break
+
+		logger.info (f'User {user["name"]} still in group {delgroup.gr_name} ({res.gr_name}) and group still exists, waiting.')
+		await asyncio.sleep (1)
+	if not ok:
+		raise ServerError ({'status': 'resolve_timeout'})
+
 	return response.json ({'status': 'ok'})
 
