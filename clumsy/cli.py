@@ -32,6 +32,8 @@ from .usermgrd import bp as usermgrd
 from .ktwkd import ktwkd
 
 def main ():
+	logging.basicConfig (level=logging.INFO)
+
 	name = sys.argv[1]
 	modulebp = {'mkhomedird': mkhomedird, 'nscdflushd': nscdflushd, 'usermgrd': usermgrd, 'ktwkd': ktwkd}[name]
 
@@ -75,6 +77,5 @@ def main ():
 
 		app.run (**args)
 	else:
-		logging.basicConfig (level=logging.INFO)
 		asyncio.run (modulebp ())
 
