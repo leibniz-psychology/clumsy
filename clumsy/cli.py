@@ -39,7 +39,7 @@ def main ():
 
 	if isinstance (modulebp, Blueprint):
 		app = Sanic (name)
-		app.config.from_envvar (f'SETTINGS_FILE')
+		app.config.update_config (os.environ['SETTINGS_FILE'])
 		config = app.config
 		app.blueprint (modulebp)
 
