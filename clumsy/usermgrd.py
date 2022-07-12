@@ -37,12 +37,12 @@ from unidecode import unidecode
 
 from .nss import getUser
 from .kadm import KAdm, KAdmException
+from .gssapi.server import authorized
 
 client = None
 kadm = None
 flushsession = None
 homedirsession = None
-delToken = dict ()
 sharedDir = '/storage/public'
 homeDir = '/storage/home'
 
@@ -151,9 +151,14 @@ def findUnused (it):
 	return None
 
 @bp.route ('/', methods=['POST'])
+# @authorize is not async, but I’m not aware of any async gssapi module -.-
+@authorized('KERBEROS_USER')
 @withRollback
-async def addUser (request, rollback):
+async def addUser (request, rollback, user):
 	config = request.app.config
+
+	if user.split ('@', 1)[0] != config.AUTHORIZATION_CREATE:
+		raise Forbidden ()
 
 	form = request.json
 	logger.debug (f'creating new user from {form}')
@@ -255,7 +260,8 @@ async def addUser (request, rollback):
 			f'with UID/GID {uid}')
 	return response.json ({'status': 'ok', 'user': user, 'password': password, 'uid': uid, 'gid': uid}, status=201)
 
-@bp.route ('/<user>', methods=['DELETE'])
+@bp.route ('/', methods=['DELETE'])
+@authorized('KERBEROS_USER')
 async def deleteUser (request, user):
 	"""
 	Delete user from the cluster.
@@ -265,78 +271,50 @@ async def deleteUser (request, user):
 	"""
 
 	config = request.app.config
-	delFile = None
-	delUser = None
-	owner = None
-	start = 0.0
-	uid = 0
-	gid = 0
-	now = time.time ()
-	# in seconds
-	tokenTimeout = 60
 
 	try:
+		user = user.split ('@', 1)[0]
 		res = getUser (user)
 		uid = res['uid']
 		gid = res['gid']
-		delUser = res['name']
+		logger.info (f'Got request to delete {user} {uid}/{gid}')
 	except KeyError:
 		raise NotFound ({'status': 'user_not_found'})
 
 	if not (config.MIN_UID <= uid < config.MAX_UID):
 		raise Forbidden ({'status': 'unauthorized'})
 
-	if user not in delToken:
-		while True:
-			newToken = randomSecret(32)
-			delFile = os.path.join(res['homedir'], 'confirm_deletion' + '_' + newToken)
-			delToken[delUser] = (delFile, now)
-			if not os.path.exists (delFile):
-				return response.json ({'status': 'again', 'token': delFile})
-
-	delFile, start = delToken.pop (user)
-
-	# check whether the file exists, belongs to the user who requested deletion, both the request and the token is recent
+	# disallow logging in by deleting principal
 	try:
-		ownerUid = os.stat(delFile).st_uid
-	except FileNotFoundError:
-		raise NotFound ({'status': 'no_proof'})
+		await kadm.getPrincipal (user)
+		# XXX: race-condition
+		await kadm.deletePrincipal (user)
+	except KeyError:
+		logger.warning (f'kerberos principal for {user} already gone')
+	except KAdmException:
+		raise ServerError ({'status': 'kerberos_failed'})
 
-	if ownerUid == uid and (now - start) <= tokenTimeout and (now - os.path.getctime(delFile)) <= tokenTimeout:
-		# disallow logging in by deleting principal
-		try:
-			await kadm.getPrincipal (user)
-			# XXX: race-condition
-			await kadm.deletePrincipal (user)
-		except KeyError:
-			logger.warning (f'kerberos principal for {user} already gone')
-		except KAdmException:
-			raise ServerError ({'status': 'kerberos_failed'})
+	# mark homedir for deletion
+	async with homedirsession.delete (f'http://localhost/{user}') as resp:
+		deldata = await resp.json ()
+		if deldata['status'] != 'again':
+			raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
 
-		# mark homedir for deletion
-		async with homedirsession.delete (f'http://localhost/{user}') as resp:
-			deldata = await resp.json ()
-			if deldata['status'] != 'again':
-				raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
+	conn = await client.connect (is_async=True)
+	await conn.delete (config.LDAP_ENTRY_PEOPLE.format (user=user))
+	await conn.delete (config.LDAP_ENTRY_GROUP.format (user=user))
+	conn.close ()
 
-		conn = await client.connect (is_async=True)
-		await conn.delete (config.LDAP_ENTRY_PEOPLE.format (user=user))
-		await conn.delete (config.LDAP_ENTRY_GROUP.format (user=user))
-		conn.close ()
+	await flushUserCache ()
 
-		await flushUserCache ()
+	# finally delete homedir
+	async with homedirsession.delete (f'http://localhost/{user}', params={'token': deldata['token']}) as resp:
+		deldata = await resp.json ()
+		if deldata['status'] != 'ok':
+			raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
 
-		# finally delete homedir
-		async with homedirsession.delete (f'http://localhost/{user}', params={'token': deldata['token']}) as resp:
-			deldata = await resp.json ()
-			if deldata['status'] != 'ok':
-				raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
+	asyncio.ensure_future (revokeAcl (uid, gid))
 
-		asyncio.ensure_future (revokeAcl (uid, gid))
-
-		logger.info (f'Deleted user {user}')
-		return response.json ({'status': 'ok'})
-	else:
-		# user did not prove he is allowed to do this
-		raise Forbidden ({'status': 'invalid_proof'})
+	logger.info (f'Deleted user {user}')
+	return response.json ({'status': 'ok'})
 

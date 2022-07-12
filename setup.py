@@ -6,7 +6,7 @@ setup(
     author='Lars-Dominik Braun',
     author_email='ldb@leibniz-psychology.org',
     url='https://github.com/leibniz-psychology/clumsy',
-    packages=['clumsy'],
+    packages=['clumsy', 'clumsy.gssapi'],
     description='Cluster Management System',
     #long_description=open('README.rst').read(),
     long_description_content_type='text/x-rst',
@@ -16,6 +16,8 @@ setup(
         'aiohttp<4',
         'bonsai',
         'unidecode',
+        'gssapi',
+        'www-authenticate',
     ],
     setup_requires=['pytest-runner'],
     tests_require=[
@@ -27,6 +29,7 @@ setup(
     entry_points={
     'console_scripts': [
             'clumsy = clumsy.cli:main',
+            'usermgr = clumsy.usermgrcli:main',
             ],
     },
     classifiers = [

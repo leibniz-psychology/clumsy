@@ -8,12 +8,31 @@
   #:use-module (gnu packages check)
   #:use-module (guix packages)
   #:use-module (guix download)
+  #:use-module (guix git-download)
   #:use-module (guix build-system python)
   #:use-module (guix gexp)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-26))
 
 (define %source-dir (dirname (dirname (current-filename))))
+
+(define-public python-www-authenticate
+  (package
+    (name "python-www-authenticate")
+    (version "0.9.2")
+    (source (origin
+              (method git-fetch)
+              (uri (git-reference
+                    (url "https://github.com/alexdutton/www-authenticate.git")
+                    (commit version)))
+              (file-name (git-file-name name version))
+              (sha256 (base32 "01p6qm4fyg3w6j8xwk1lwxb0jhmblagwnzr6vi7gk8gddq8apn8s"))))
+    (build-system python-build-system)
+    (native-inputs (list python-nose))
+    (home-page "https://github.com/alexsdutton/www-authenticate")
+    (synopsis "Parser for WWW-Authenticate headers.")
+    (description "Parser for WWW-Authenticate headers.")
+    (license license:bsd-3)))
 
 (package
   (name "clumsy")
@@ -34,7 +53,9 @@
    `(("python-sanic" ,python-sanic)
      ("python-aiohttp" ,python-aiohttp)
      ("python-unidecode" ,python-unidecode)
-     ("python-bonsai" ,python-bonsai)))
+     ("python-bonsai" ,python-bonsai)
+     ("python-gssapi" ,python-gssapi)
+     ("python-www-authenticate" ,python-www-authenticate)))
   (native-inputs
     `(("python-pytest" ,python-pytest)
       ("python-pytest-runner" ,python-pytest-runner)
