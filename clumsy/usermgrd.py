@@ -304,8 +304,22 @@ async def deleteUser (request, user):
 			raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
 
 	conn = await ldapclient.connect (is_async=True)
-	await conn.delete (f'uid={user},{config.LDAP_BASE_PEOPLE}')
-	await conn.delete (f'cn={user},{config.LDAP_BASE_GROUP}')
+	try:
+		await conn.delete (f'uid={user},{config.LDAP_BASE_PEOPLE}')
+	except bonsai.errors.NoSuchObjectError:
+		logger.warning (f'LDAP user {user} already gone')
+	try:
+		await conn.delete (f'cn={user},{config.LDAP_BASE_GROUP}')
+	except bonsai.errors.NoSuchObjectError:
+		logger.warning (f'LDAP group {user} already gone')
+	# Find all secondary groups user is member in and delete membership.
+	results = await conn.search (config.LDAP_BASE_GROUP,
+			bonsai.LDAPSearchScope.SUBTREE,
+			f'(&(objectClass=posixGroup)(memberUid={user}))')
+	for g in results:
+		g['memberUid'].remove (user)
+		await g.modify ()
+	await garbageCollectGroups (config, conn)
 	conn.close ()
 
 	await flushUserCache ()
@@ -493,6 +507,16 @@ async def addUserToGroup (request, user, modgroup, moduser):
 	logger.info (f'Added user {moduser["name"]} to group {modgroup.gr_name}')
 	return response.json ({'status': 'ok'})
 
+async def garbageCollectGroups (config, conn):
+	""" Remove groups with no members. """
+	query = f'(&(objectClass=posixGroup)(gidNumber>={config.MIN_GID})(gidNumber<={config.MAX_GID})(!(memberUid=*)))'
+	logger.info (f'Searching orphan groups with query {query}')
+	results = await conn.search (config.LDAP_BASE_GROUP,
+			bonsai.LDAPSearchScope.SUBTREE, query)
+	for g in results:
+		logger.info (f'Garbage-collected group {g["cn"]} with members {g.get("memberUid")}')
+		await g.delete ()
+
 @bp.route ('/group/<delgroup>', methods=['DELETE'])
 @authorized('KERBEROS_USER')
 async def deleteGroup (request, delgroup, user):
@@ -517,14 +541,14 @@ async def deleteGroup (request, delgroup, user):
 	results = await getLdapGroup (conn, config, delgroup.gr_name)
 	try:
 		results['memberUid'].remove (user['name'])
-	except ValueError:
+	except (KeyError, ValueError):
+		# KeyError, if entry has no members (i.e. no memberUid),
+		# ValueError, if user not in members.
 		raise NotFound ({'status': 'not_a_member'})
-	if len (results['memberUid']) == 0:
-		await conn.delete (f'cn={delgroup.gr_name},{config.LDAP_BASE_GROUP}')
-		logger.info (f'Deleted group {delgroup.gr_name}')
-	else:
-		await results.modify ()
-		logger.info (f'Removed user {user["name"]} from group {delgroup.gr_name}')
+	await results.modify ()
+	logger.info (f'Removed user {user["name"]} from group {delgroup.gr_name}')
+
+	await garbageCollectGroups (config, conn)
 	conn.close ()
 
 	# flush and sanity check to make sure the user not in the group any more.
