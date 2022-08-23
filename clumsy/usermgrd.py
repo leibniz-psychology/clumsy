@@ -243,7 +243,7 @@ async def addUser (request, rollback, user):
 	# create homedir
 	try:
 		logger.debug (f'adding homedir for {user}')
-		async with homedirsession.post (f'http://localhost/{user}') as resp:
+		async with homedirsession.post (f'http://localhost/user/{user}') as resp:
 			data = await resp.json ()
 			if data['status'] != 'ok':
 				raise ServerError ({'status': 'mkhomedir_failed', 'mkhomedird_status': data['status']})
@@ -290,7 +290,7 @@ async def deleteUser (request, user):
 		raise ServerError ({'status': 'kerberos_failed'})
 
 	# mark homedir for deletion
-	async with homedirsession.delete (f'http://localhost/{user}') as resp:
+	async with homedirsession.delete (f'http://localhost/user/{user}') as resp:
 		deldata = await resp.json ()
 		if deldata['status'] != 'again':
 			raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
@@ -317,7 +317,7 @@ async def deleteUser (request, user):
 	await flushUserCache ()
 
 	# finally delete homedir
-	async with homedirsession.delete (f'http://localhost/{user}', params={'token': deldata['token']}) as resp:
+	async with homedirsession.delete (f'http://localhost/user/{user}', params={'token': deldata['token']}) as resp:
 		deldata = await resp.json ()
 		if deldata['status'] != 'ok':
 			raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})

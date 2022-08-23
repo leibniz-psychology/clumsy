@@ -59,7 +59,7 @@ async def copyDir (a, b, uid, gid):
 	ret = await proc.wait ()
 	return ret == 0
 
-@bp.route ('/<user>', methods=['POST'])
+@bp.route ('/user/<user>', methods=['POST'])
 async def touchHome (request, user):
 	"""
 	Create a user’s home
@@ -126,7 +126,7 @@ async def revokeAcl (uid, gid, dirs):
 	stdout, stderr = await proc.communicate()
 	logger.debug (f'setfacl reported {stdout} {stderr}')
 
-@bp.route ('/<user>', methods=['DELETE'])
+@bp.route ('/user/<user>', methods=['DELETE'])
 async def deleteHome (request, user):
 	"""
 	Delete a user’s homedir
