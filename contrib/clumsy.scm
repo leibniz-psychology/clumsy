@@ -49,15 +49,14 @@
          (lambda* (#:key inputs native-inputs #:allow-other-keys)
            ;; Not replacing sssd/nscd executables, because they belong
            ;; to the OS, which is not Guix yet.
-           (substitute* "clumsy/usermgrd.py"
-             (("'setfacl'")
-              (string-append "'" (search-input-file inputs "bin/setfacl") "'")))
            (substitute* "clumsy/kadm.py"
              (("'kadmin'")
               (string-append "'" (search-input-file inputs "bin/kadmin") "'")))
            (substitute* "clumsy/mkhomedird.py"
+             (("'setfacl'")
+              (string-append "'" (search-input-file inputs "bin/setfacl") "'"))
              (("'rsync'")
-              (string-append "'" (search-input-file inputs "bin/setfacl") "'"))))))))
+              (string-append "'" (search-input-file inputs "bin/rsync") "'"))))))))
   (inputs (list acl rsync))
   (propagated-inputs
    (list python-sanic python-aiohttp python-unidecode python-bonsai

@@ -43,8 +43,6 @@ ldapclient = None
 kadm = None
 flushsession = None
 homedirsession = None
-sharedDir = '/storage/public'
-homeDir = '/storage/home'
 
 def randomSecret (n):
 	alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -69,12 +67,6 @@ async def flushUserCache ():
 		raise ServerError ({'status': 'nscdflushd_connect'})
 
 # revoke ACL while deleting the user
-async def revokeAcl (uid, gid):
-	proc = await asyncio.create_subprocess_exec ('setfacl', '-R', '-x', f'u:{uid}', '-x', f'g:{gid}', f'{homeDir}', f'{sharedDir}',
-                                              stdout=asyncio.subprocess.PIPE,
-                                              stderr=asyncio.subprocess.PIPE)
-	stdout, stderr = await proc.communicate()
-
 bp = Blueprint('usermgrd')
 
 @bp.listener('before_server_start')
@@ -329,8 +321,6 @@ async def deleteUser (request, user):
 		deldata = await resp.json ()
 		if deldata['status'] != 'ok':
 			raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
-
-	asyncio.ensure_future (revokeAcl (uid, gid))
 
 	logger.info (f'Deleted user {user}')
 	return response.json ({'status': 'ok'})

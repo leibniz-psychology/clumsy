@@ -110,6 +110,22 @@ def remove_readonly(func, path, _):
 	os.chmod(path, stat.S_IWRITE)
 	func(path)
 
+async def revokeAcl (uid, gid, dirs):
+	args = ['setfacl',
+			'-R',
+			'-x', f'u:{uid}',
+			'-x', f'd:u:{uid}',
+			'-x', f'g:{gid}',
+			'-x', f'd:g:{gid}',
+			'--',
+			] + dirs
+	logger.debug (f'Removing ACL for {uid}/{gid} in {dirs}')
+	proc = await asyncio.create_subprocess_exec (*args,
+			stdout=asyncio.subprocess.PIPE,
+			stderr=asyncio.subprocess.PIPE)
+	stdout, stderr = await proc.communicate()
+	logger.debug (f'setfacl reported {stdout} {stderr}')
+
 @bp.route ('/<user>', methods=['DELETE'])
 async def deleteHome (request, user):
 	"""
@@ -156,11 +172,15 @@ async def deleteHome (request, user):
 		except KeyError:
 			pass
 
-		dirs = map (lambda x: x.format (**userdata), config.DIRECTORIES.keys ())
+		dirs = list (map (lambda x: x.format (**userdata), config.DIRECTORIES.keys ()))
 		for d in dirs:
 			if os.path.exists (d):
 				logger.debug (f'deleting directory {d}')
 				shutil.rmtree (d, onerror=remove_readonly)
+		# The actual directory will be gone, but we can revoke
+		# one level up.
+		await revokeAcl (userdata['uid'], userdata['gid'],
+				[os.path.dirname (x) for x in dirs])
 
 		return response.json ({'status': 'ok'})
 
