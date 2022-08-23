@@ -110,16 +110,26 @@ def remove_readonly(func, path, _):
 	os.chmod(path, stat.S_IWRITE)
 	func(path)
 
-async def revokeAcl (uid, gid, dirs):
-	args = ['setfacl',
-			'-R',
-			'-x', f'u:{uid}',
-			'-x', f'd:u:{uid}',
-			'-x', f'g:{gid}',
-			'-x', f'd:g:{gid}',
-			'--',
-			] + dirs
-	logger.debug (f'Removing ACL for {uid}/{gid} in {dirs}')
+async def revokeAcl (dirs, uids=None, gids=None):
+	assert uids or gids
+
+	args = ['setfacl', '-R']
+	if uids:
+		for u in uids:
+			args.extend ([
+				'-x', f'u:{u}',
+				'-x', f'd:u:{u}',
+				])
+	if gids:
+		for g in gids:
+			args.extend ([
+				'-x', f'g:{g}',
+				'-x', f'd:g:{g}',
+				])
+	args.append ('--')
+	args.extend (dirs)
+
+	logger.debug (f'Removing ACL for {uids}/{gids} in {dirs} using {args}')
 	proc = await asyncio.create_subprocess_exec (*args,
 			stdout=asyncio.subprocess.PIPE,
 			stderr=asyncio.subprocess.PIPE)
@@ -172,15 +182,37 @@ async def deleteHome (request, user):
 		except KeyError:
 			pass
 
-		dirs = list (map (lambda x: x.format (**userdata), config.DIRECTORIES.keys ()))
-		for d in dirs:
-			if os.path.exists (d):
+		for d, props in config.DIRECTORIES.items ():
+			d = d.format (**userdata)
+			if props.get('delete', False) and os.path.exists (d):
 				logger.debug (f'deleting directory {d}')
 				shutil.rmtree (d, onerror=remove_readonly)
 		# The actual directory will be gone, but we can revoke
 		# one level up.
-		await revokeAcl (userdata['uid'], userdata['gid'],
-				[os.path.dirname (x) for x in dirs])
+		dirs = list (map (lambda x: x[0], filter (lambda x: x[1].get('deleteGroup', False), config.DIRECTORIES.items ())))
+		await revokeAcl (dirs, uids=[userdata['uid']], gids=[userdata['gid']])
 
 		return response.json ({'status': 'ok'})
+
+@bp.route ('/group/<gids>', methods=['DELETE'])
+async def deleteGroup (request, gids):
+	config = request.app.config
+
+	try:
+		gids = [int (g) for g in gids.split (',')]
+	except ValueError:
+		return response.json ({'status': 'invalid_gid'}, status=400)
+
+	# Make sure none of the groups actually exists.
+#	for g in groups:
+#		try:
+#			res = grp.getgrgid (g)
+#			return response.json ({'status': 'group_exists', 'gid': g, 'group': res.gr_name}, status=403)
+#		except KeyError:
+#			pass
+
+	dirs = list (map (lambda x: x[0], filter (lambda x: x[1].get('deleteGroup', False), config.DIRECTORIES.items ())))
+	await revokeAcl (dirs, gids=gids)
+
+	return response.json ({'status': 'ok'})
 

@@ -501,11 +501,20 @@ async def garbageCollectGroups (config, conn):
 	""" Remove groups with no members. """
 	query = f'(&(objectClass=posixGroup)(gidNumber>={config.MIN_GID})(gidNumber<={config.MAX_GID})(!(memberUid=*)))'
 	logger.info (f'Searching orphan groups with query {query}')
+	gids = []
 	results = await conn.search (config.LDAP_BASE_GROUP,
 			bonsai.LDAPSearchScope.SUBTREE, query)
 	for g in results:
 		logger.info (f'Garbage-collected group {g["cn"]} with members {g.get("memberUid")}')
 		await g.delete ()
+		gids.append (str (g['gidNumber'][0]))
+
+	if gids:
+		gids = ','.join (gids)
+		async with homedirsession.delete (f'http://localhost/group/{gids}') as resp:
+			deldata = await resp.json ()
+			if deldata['status'] != 'ok':
+				raise ServerError ({'status': 'mkhomedir_group_delete', 'mkhomedird_status': deldata['status']})
 
 @bp.route ('/group/<delgroup>', methods=['DELETE'])
 @authorized('KERBEROS_USER')
