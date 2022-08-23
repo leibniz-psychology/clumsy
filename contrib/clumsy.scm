@@ -2,10 +2,11 @@
   #:use-module ((guix licenses) #:prefix license:)
   #:use-module (gnu packages)
   #:use-module (gnu packages acl)
+  #:use-module (gnu packages check)
   #:use-module (gnu packages openldap)
   #:use-module (gnu packages python-web)
   #:use-module (gnu packages python-xyz)
-  #:use-module (gnu packages check)
+  #:use-module (gnu packages rsync)
   #:use-module (guix packages)
   #:use-module (guix download)
   #:use-module (guix git-download)
@@ -46,24 +47,26 @@
      (modify-phases %standard-phases
        (add-after 'unpack 'patch-paths
          (lambda* (#:key inputs native-inputs #:allow-other-keys)
+           ;; Not replacing sssd/nscd executables, because they belong
+           ;; to the OS, which is not Guix yet.
            (substitute* "clumsy/usermgrd.py"
-             (("'setfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/setfacl'"))))))))
-  (inputs `(("acl" ,acl)))
+             (("'setfacl'")
+              (string-append "'" (search-input-file inputs "bin/setfacl") "'")))
+           (substitute* "clumsy/kadm.py"
+             (("'kadmin'")
+              (string-append "'" (search-input-file inputs "bin/kadmin") "'")))
+           (substitute* "clumsy/mkhomedird.py"
+             (("'rsync'")
+              (string-append "'" (search-input-file inputs "bin/setfacl") "'"))))))))
+  (inputs (list acl rsync))
   (propagated-inputs
-   `(("python-sanic" ,python-sanic)
-     ("python-aiohttp" ,python-aiohttp)
-     ("python-unidecode" ,python-unidecode)
-     ("python-bonsai" ,python-bonsai)
-     ("python-gssapi" ,python-gssapi)
-     ("python-www-authenticate" ,python-www-authenticate)))
+   (list python-sanic python-aiohttp python-unidecode python-bonsai
+         python-gssapi python-www-authenticate))
   (native-inputs
-    `(("python-pytest" ,python-pytest)
-      ("python-pytest-runner" ,python-pytest-runner)
-      ("python-pytest-cov" ,python-pytest-cov)
-      ("python-pytest-asyncio" ,python-pytest-asyncio)
-      ("python-k5test" ,python-k5test)))
+    (list python-pytest python-pytest-runner python-pytest-cov
+          python-pytest-asyncio python-k5test))
   (home-page #f)
   (synopsis #f)
   (description #f)
-  (license #f))
+  (license license:expat))
 
