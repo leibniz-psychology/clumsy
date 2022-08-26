@@ -109,42 +109,25 @@ UserInfo = namedtuple ('UserInfo',
 		'email'],
 		defaults=[None]*6)
 
-def numberedVariants (prefixes, maxlen, n):
-	for postfix in [''] + list (range (1, n)):
-		for prefix in prefixes:
-			postfix = str (postfix)
-			yield f'{prefix[:maxlen-len (postfix)]}{postfix}'
+reservedUsers = set ()
 
-def possibleUsernames (userdata, minlen=3, maxlen=16):
-	"""
-	Create UNIX account names based on submitted user data
-	"""
-
-	def generate (maxlen):
-		prefixes = []
-		# preferred username
-		if userdata.username:
-			prefixes.append (unidecode (userdata.username))
-		# otherwise use the actual name
-		if userdata.firstName and userdata.lastName:
-			prefixes.append ((unidecode (userdata.firstName)[0] + unidecode (userdata.lastName)))
-		yield from numberedVariants (prefixes, maxlen, 100)
-
-	r = re.compile (r'[^a-z0-9]')
-	for u in generate (maxlen):
-		u = r.sub ('', u.lower ())
-		# usernames must be reasonably long and cannot start with a digit
-		if len (u) >= minlen and u[0].isalpha ():
-			yield u
-
+@contextmanager
 def findUnusedUser (it):
 	""" From iterator it find unused user or user id """
+	ret = None
 	for u in it:
+		if u in reservedUsers:
+			continue
 		try:
 			res = getUser (u)
 		except KeyError:
-			return u
-	return None
+			ret = u
+			break
+	reservedUsers.add (ret)
+	try:
+		yield ret
+	finally:
+		reservedUsers.remove (ret)
 
 @bp.route ('/user', methods=['POST'])
 # @authorize is not async, but I’m not aware of any async gssapi module -.-
@@ -160,59 +143,58 @@ async def addUser (request, rollback, user):
 	logger.debug (f'creating new user from {form}')
 	userdata = UserInfo (**form)
 
-	# make sure the sanitized usernames are >= 3 characters long
-	user = findUnusedUser (possibleUsernames (userdata))
-	if not user:
-		raise ServerError ({'status': 'username'})
+	with findUnusedUser ([random.randrange (config.MIN_UID, config.MAX_UID) \
+			for i in range (100)]) as uid:
+		gid = uid
+		if not uid:
+			raise ServerError ({'status': 'uid'})
+		user = f'user-{uintToQuint (uid, 2)}'
 
-	uid = gid = findUnusedUser ([random.randrange (config.MIN_UID, config.MAX_UID) \
-			for i in range (100)])
-	if not uid:
-		raise ServerError ({'status': 'uid'})
+		conn = await ldapclient.connect (is_async=True)
+		o = bonsai.LDAPEntry(f'uid={user},{config.LDAP_BASE_PEOPLE}')
+		o['objectClass'] = [
+				'top',
+				'person',
+				'organizationalPerson',
+				'inetOrgPerson',
+				'posixAccount',
+				'shadowAccount',
+				] + config.LDAP_EXTRA_CLASSES
+		# LDAP: person
+		o['sn'] = userdata.lastName
+		o['cn'] = user
+		# LDAP: inetOrgPerson
+		o['givenName'] = userdata.firstName
+		o['mail'] = userdata.email
+		# LDAP: posixAccount
+		o['uid'] = user
+		o['uidNumber'] = uid
+		o['gidNumber'] = gid
+		o['homeDirectory'] = config.HOME_TEMPLATE.format (user=user)
+		o['loginShell'] = '/bin/bash'
+		o['gecos'] = f'{userdata.firstName} {userdata.lastName}'
+		o['description'] = userdata.authorization
+		try:
+			logger.debug (f'adding user {o} to ldap')
+			await conn.add (o)
+			# LIFO -> flush cache last
+			rollback.push_async_callback (flushUserCache)
+			rollback.push_async_callback (o.delete)
+		except bonsai.errors.AlreadyExists:
+			raise ServerError ({'status': 'user_exists'})
 
-	conn = await ldapclient.connect (is_async=True)
-	o = bonsai.LDAPEntry(f'uid={user},{config.LDAP_BASE_PEOPLE}')
-	o['objectClass'] = [
-			'top',
-			'person',
-			'organizationalPerson',
-			'inetOrgPerson',
-			'posixAccount',
-			'shadowAccount',
-			] + config.LDAP_EXTRA_CLASSES
-	# LDAP: person
-	o['sn'] = userdata.lastName
-	o['cn'] = user
-	# LDAP: inetOrgPerson
-	o['givenName'] = userdata.firstName
-	o['mail'] = userdata.email
-	# LDAP: posixAccount
-	o['uid'] = user
-	o['uidNumber'] = uid
-	o['gidNumber'] = gid
-	o['homeDirectory'] = config.HOME_TEMPLATE.format (user=user)
-	o['loginShell'] = '/bin/bash'
-	try:
-		logger.debug (f'adding user {o} to ldap')
-		await conn.add (o)
-		# LIFO -> flush cache last
-		rollback.push_async_callback (flushUserCache)
-		rollback.push_async_callback (o.delete)
-	except bonsai.errors.AlreadyExists:
-		raise ServerError ({'status': 'user_exists'})
-
-	o = bonsai.LDAPEntry (f'cn={user},{config.LDAP_BASE_GROUP}')
-	o['objectClass'] = ['top', 'posixGroup']
-	o['cn'] = user
-	o['gidNumber'] = gid
-	o['memberUid'] = user
-	try:
-		logger.debug (f'adding group {o} to ldap')
-		await conn.add (o)
-		rollback.push_async_callback (o.delete)
-	except bonsai.errors.AlreadyExists:
-		raise ServerError ({'status': 'group_exists'})
-	conn.close ()
+		o = bonsai.LDAPEntry (f'cn={user},{config.LDAP_BASE_GROUP}')
+		o['objectClass'] = ['top', 'posixGroup']
+		o['cn'] = user
+		o['gidNumber'] = gid
+		o['memberUid'] = user
+		try:
+			logger.debug (f'adding group {o} to ldap')
+			await conn.add (o)
+			rollback.push_async_callback (o.delete)
+		except bonsai.errors.AlreadyExists:
+			raise ServerError ({'status': 'group_exists'})
+		conn.close ()
 
 	# flush and sanity check to make sure the user actually exists now and
 	# is resolvable in both directions (user->uid; uid->user)
