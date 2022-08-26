@@ -25,7 +25,7 @@ Users must be local to the system this service is running on.
 """
 
 import secrets, random, functools, re, asyncio, grp
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, contextmanager
 from collections import namedtuple
 
 import aiohttp
@@ -38,6 +38,7 @@ from unidecode import unidecode
 from .nss import getUser
 from .kadm import KAdm, KAdmException
 from .gssapi.server import authorized
+from .uid import uintToQuint
 
 ldapclient = None
 kadm = None
@@ -325,30 +326,28 @@ async def deleteUser (request, user):
 	logger.info (f'Deleted user {user}')
 	return response.json ({'status': 'ok'})
 
+reservedGroups = set ()
+
+@contextmanager
 def findUnusedGroup (it):
 	""" From iterator it find unused group or group id """
+	g = None
 	for u in it:
 		try:
+			if u in reservedGroups:
+				continue
 			if isinstance (u, str):
 				res = grp.getgrnam (u)
 			elif isinstance (u, int):
 				res = grp.getgrgid (u)
 		except KeyError:
-			return u
-	return None
-
-def possibleGroupnames (owner, name, minlen=3, maxlen=32):
-	"""
-	Create valid UNIX group names based on submitted user data
-	"""
-
-	r = re.compile (r'[^a-z0-9-]')
-	owner = r.sub ('', owner.lower ())
-	name = r.sub ('', name.lower ())
-	for g in numberedVariants ([f'{owner}-{name}'], maxlen, 100):
-		# group names must be reasonably long and cannot start with a digit
-		if len (g) >= minlen and g[0].isalpha ():
-			yield g
+			g = u
+			break
+	reservedGroups.add (g)
+	try:
+		yield g
+	finally:
+		reservedGroups.remove (g)
 
 def ensureUser (username : str, config, error : str ='user_not_found'):
 	""" Ensure user exists and we are allowed to operate on it """
@@ -370,32 +369,30 @@ async def addGroup (request, rollback, newGroupName, user):
 
 	owner = ensureUser (user, config)
 
-	group = findUnusedGroup (possibleGroupnames (owner['name'], newGroupName))
-	if not group:
-		raise ServerError ({'status': 'groupname'})
+	with findUnusedGroup ([random.randrange (config.MIN_GID, config.MAX_GID) \
+			for i in range (100)]) as gid:
+		if not gid:
+			raise ServerError ({'status': 'gid'})
+		group = f'group-{uintToQuint(gid, 2)}'
 
-	gid = gid = findUnusedGroup ([random.randrange (config.MIN_GID, config.MAX_GID) \
-			for i in range (100)])
-	if not gid:
-		raise ServerError ({'status': 'gid'})
-
-	conn = await ldapclient.connect (is_async=True)
-	o = bonsai.LDAPEntry(f'cn={group},{config.LDAP_BASE_GROUP}')
-	o['objectClass'] = [
-			'top',
-			'posixGroup',
-			]
-	o['cn'] = group
-	o['gidNumber'] = gid
-	o['memberUid'] = owner['name']
-	try:
-		logger.debug (f'adding group {o} to ldap')
-		await conn.add (o)
-		# LIFO -> flush cache last
-		rollback.push_async_callback (flushUserCache)
-		rollback.push_async_callback (o.delete)
-	except bonsai.errors.AlreadyExists:
-		raise ServerError ({'status': 'group_exists'})
+		conn = await ldapclient.connect (is_async=True)
+		o = bonsai.LDAPEntry(f'cn={group},{config.LDAP_BASE_GROUP}')
+		o['objectClass'] = [
+				'top',
+				'posixGroup',
+				]
+		o['cn'] = group
+		o['gidNumber'] = gid
+		o['memberUid'] = owner['name']
+		o['description'] = f'Created by {user} for {newGroupName}'
+		try:
+			logger.debug (f'adding group {o} to ldap')
+			await conn.add (o)
+			# LIFO -> flush cache last
+			rollback.push_async_callback (flushUserCache)
+			rollback.push_async_callback (o.delete)
+		except bonsai.errors.AlreadyExists:
+			raise ServerError ({'status': 'group_exists'})
 
 	# flush and sanity check to make sure the group actually exists now and
 	# is resolvable in both directions (gid→name, name→gid)
