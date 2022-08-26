@@ -503,8 +503,12 @@ async def garbageCollectGroups (config, conn):
 			bonsai.LDAPSearchScope.SUBTREE, query)
 	for g in results:
 		logger.info (f'Garbage-collected group {g["cn"]} with members {g.get("memberUid")}')
-		await g.delete ()
-		gids.append (str (g['gidNumber'][0]))
+		try:
+			await g.delete ()
+			gids.append (str (g['gidNumber'][0]))
+		except bonsai.errors.NoSuchObjectError:
+			# Someone else removed it. That’s fine.
+			pass
 
 	if gids:
 		gids = ','.join (gids)
