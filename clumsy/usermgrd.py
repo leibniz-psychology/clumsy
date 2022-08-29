@@ -172,7 +172,7 @@ async def addUser (request, rollback, user):
 		o['gidNumber'] = gid
 		o['homeDirectory'] = config.HOME_TEMPLATE.format (user=user)
 		o['loginShell'] = '/bin/bash'
-		o['gecos'] = f'{userdata.firstName} {userdata.lastName}'
+		o['gecos'] = userdata.username
 		o['description'] = userdata.authorization
 		try:
 			logger.debug (f'adding user {o} to ldap')
