@@ -3,7 +3,7 @@ Description=Cluster user management
 
 [Service]
 ExecStart=/usr/local/bin/clumsy usermgrd
-Environment="SETTINGS_FILE=/usr/local/etc/clumsy/usermgrd.config"
+Environment="SETTINGS_FILE=/usr/local/etc/clumsy/usermgrd.config" "KRB5_KTNAME=/etc/clumsy/usermgrd.keytab"
 StandardOutput=syslog
 StandardError=syslog
 
