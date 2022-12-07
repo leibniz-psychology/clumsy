@@ -67,6 +67,10 @@ async def flushUserCache ():
 	except aiohttp.ClientError:
 		raise ServerError ({'status': 'nscdflushd_connect'})
 
+def keepAscii (s):
+	""" Drop all non-ASCII characters (probably more) from s """
+	return re.sub (r'[^0-9a-zA-Z @+-]+', '', s)
+
 # revoke ACL while deleting the user
 bp = Blueprint('usermgrd')
 
@@ -165,14 +169,14 @@ async def addUser (request, rollback, user):
 		o['cn'] = user
 		# LDAP: inetOrgPerson
 		o['givenName'] = userdata.firstName
-		o['mail'] = userdata.email
+		o['mail'] = keepAscii (userdata.email)
 		# LDAP: posixAccount
 		o['uid'] = user
 		o['uidNumber'] = uid
 		o['gidNumber'] = gid
 		o['homeDirectory'] = config.HOME_TEMPLATE.format (user=user)
 		o['loginShell'] = '/bin/bash'
-		o['gecos'] = userdata.username
+		o['gecos'] = keepAscii (userdata.username)
 		o['description'] = userdata.authorization
 		try:
 			logger.debug (f'adding user {o} to ldap')
