@@ -6,6 +6,7 @@ ExecStart=/usr/local/bin/clumsy mkhomedird
 Environment="SETTINGS_FILE=/usr/local/etc/clumsy/mkhomedird.config"
 StandardOutput=syslog
 StandardError=syslog
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target

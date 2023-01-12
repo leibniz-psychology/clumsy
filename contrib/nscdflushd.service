@@ -6,6 +6,7 @@ ExecStart=/usr/local/bin/clumsy nscdflushd
 Environment="SETTINGS_FILE=/usr/local/etc/clumsy/nscdflushd.config"
 StandardOutput=syslog
 StandardError=syslog
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
