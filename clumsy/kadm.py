@@ -29,8 +29,7 @@ password on the commandline.
 """
 
 import asyncio, subprocess
-
-from sanic.log import logger
+import structlog
 
 class KAdmException (Exception):
 	pass
@@ -44,6 +43,8 @@ class KAdm:
 		self.env = env
 
 	async def addPrincipal (self, name, password, expire='never'):
+		logger = structlog.get_logger ()
+
 		cmd = self.commonArgs + [
 				'add_principal',
 				'+requires_preauth',
@@ -51,7 +52,8 @@ class KAdm:
 				'-expire', expire,
 				name,
 				]
-		logger.debug (' '.join (cmd))
+		logger = logger.bind (command=cmd)
+		logger.info ('kadm_add_principal')
 		proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=self.env)
 
 		buf = await proc.stdout.read (512)
@@ -68,17 +70,25 @@ class KAdm:
 		proc.stdin.close ()
 
 		ret = await proc.wait ()
+		logger.info ('kadm_add_status', ret=ret)
 		if ret != 0:
 			raise KAdmException (buf)
 
 	async def getPrincipal (self, name):
+		logger = structlog.get_logger ()
+
 		cmd = self.commonArgs + ['get_principal', name]
+		logger = logger.bind (command=cmd)
+		logger.info ('kadm_get_principal')
 		proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=self.env)
+
 		buf = await proc.stdout.read ()
 		buf = buf.decode ('utf-8')
 		ret = await proc.wait ()
+		logger.info ('kadm_get_status', ret=ret)
 		if ret != 0:
 			raise KeyError ('not found')
+
 		princ = {}
 		for l in buf.split ('\n'):
 			try:
@@ -86,12 +96,20 @@ class KAdm:
 				princ[k] = v
 			except ValueError:
 				pass
+
+		logger.info ('kadm_get_success', principal=princ)
 		return princ
 
 	async def deletePrincipal (self, name):
+		logger = structlog.get_logger ()
+
 		cmd = self.commonArgs + ['delete_principal', '-force', name]
+		logger = logger.bind (command=cmd)
+		logger.info ('kadm_delete_principal')
 		proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL, env=self.env)
+
 		ret = await proc.wait ()
+		logger.info ('kadm_get_status', ret=ret)
 		if ret != 0:
 			raise KAdmException ()
 

@@ -1,4 +1,4 @@
-# Copyright 2019–2020 Leibniz Institute for Psychology
+# Copyright 2019–2023 Leibniz Institute for Psychology
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -28,10 +28,8 @@ import secrets, random, functools, re, asyncio, grp
 from contextlib import AsyncExitStack, contextmanager
 from collections import namedtuple
 
-import aiohttp
-import bonsai
+import aiohttp, bonsai, structlog
 from sanic import Blueprint, response
-from sanic.log import logger
 from sanic.exceptions import ServerError, Forbidden, NotFound
 from unidecode import unidecode
 
@@ -58,13 +56,15 @@ async def flushUserCache ():
 	Flush the local user caches
 	"""
 	# hostname does not matter for unix domain socket?
+	logger = structlog.get_logger ()
 	try:
-		logger.debug (f'flushing caches')
-		async with flushsession.delete (f'http://localhost/account') as resp:
+		async with flushsession.delete ('http://localhost/account') as resp:
 			deldata = await resp.json ()
 			if deldata['status'] != 'ok':
+				logger.error ('flush_cache_failed', response=deldata)
 				raise ServerError ({'status': 'flush_failed', 'nscdflush_status': deldata['status']})
-	except aiohttp.ClientError:
+	except aiohttp.ClientError as e:
+		logger.error ('flush_cache_unavailable', exception=e)
 		raise ServerError ({'status': 'nscdflushd_connect'})
 
 def keepAscii (s):
@@ -144,13 +144,16 @@ async def addUser (request, rollback, user):
 		raise Forbidden ()
 
 	form = request.json
-	logger.debug (f'creating new user from {form}')
+	logger = structlog.get_logger ()
+	logger = logger.bind (user=user, data=form)
+	logger.info ('add_user_start')
 	userdata = UserInfo (**form)
 
 	with findUnusedUser ([random.randrange (config.MIN_UID, config.MAX_UID) \
 			for i in range (100)]) as uid:
 		gid = uid
 		if not uid:
+			logger.error ('add_user_no_uid', uid=uid)
 			raise ServerError ({'status': 'uid'})
 		user = f'user-{uintToQuint (uid, 2)}'
 
@@ -179,12 +182,13 @@ async def addUser (request, rollback, user):
 		o['gecos'] = keepAscii (userdata.username)
 		o['description'] = userdata.authorization
 		try:
-			logger.debug (f'adding user {o} to ldap')
+			logger.info ('add_user_ldap', ldapUser=o)
 			await conn.add (o)
 			# LIFO -> flush cache last
 			rollback.push_async_callback (flushUserCache)
 			rollback.push_async_callback (o.delete)
 		except bonsai.errors.AlreadyExists:
+			logger.info ('add_user_ldap_exists', ldapUser=o)
 			raise ServerError ({'status': 'user_exists'})
 
 		o = bonsai.LDAPEntry (f'cn={user},{config.LDAP_BASE_GROUP}')
@@ -193,10 +197,11 @@ async def addUser (request, rollback, user):
 		o['gidNumber'] = gid
 		o['memberUid'] = user
 		try:
-			logger.debug (f'adding group {o} to ldap')
+			logger.info ('add_user_ldap_group', ldapGroup=o)
 			await conn.add (o)
 			rollback.push_async_callback (o.delete)
 		except bonsai.errors.AlreadyExists:
+			logger.info ('add_user_ldap_group_exists', ldapGroup=o)
 			raise ServerError ({'status': 'group_exists'})
 		conn.close ()
 
@@ -210,36 +215,38 @@ async def addUser (request, rollback, user):
 			resUser = getUser (user)
 			resUid = getUser (uid)
 			if resUser != resUid:
+				logger.error ('add_user_mismatch', fromName=resUser, fromUid=resUid)
 				raise ServerError ({'status': 'user_mismatch'})
 			ok = True
 			break
 		except KeyError:
-			logger.debug (f'user {user} not resolvable yet, retrying')
+			logger.debug ('add_user_flush_retry')
 			await asyncio.sleep (1)
 	if not ok:
+		logger.error ('add_user_flush_failed')
 		raise ServerError ({'status': 'user_add_failed'})
 
 	try:
-		logger.debug (f'adding kerberos user {user}')
+		logger.info ('add_user_kerberos', user=user, expire=config.KERBEROS_EXPIRE)
 		password = randomSecret (32)
 		await kadm.addPrincipal (user, password, expire=config.KERBEROS_EXPIRE)
 		rollback.push_async_callback (kadm.deletePrincipal, user)
-	except KAdmException:
+	except KAdmException as e:
+		logger.error ('add_user_kerberos_failed', exc_info=e)
 		raise ServerError ({'status': 'kerberos_failed'})
 
 	# create homedir
 	try:
-		logger.debug (f'adding homedir for {user}')
 		async with homedirsession.post (f'http://localhost/user/{user}') as resp:
 			data = await resp.json ()
 			if data['status'] != 'ok':
+				logger.error ('add_user_mkhomedir_failed', response=data)
 				raise ServerError ({'status': 'mkhomedir_failed', 'mkhomedird_status': data['status']})
-	except aiohttp.ClientError:
+	except aiohttp.ClientError as e:
+		logger.error ('add_user_mkhomedir_unavailable', exc_info=e)
 		raise ServerError ({'status': 'mkhomedird_connect'})
 
-	logger.info (f'Created user {user} for '
-			f'{userdata.firstName} {userdata.lastName} ({userdata.email}) '
-			f'with UID/GID {uid}')
+	logger.info ('add_user_success')
 	return response.json ({'status': 'ok', 'user': user, 'password': password, 'uid': uid, 'gid': uid}, status=201)
 
 @bp.route ('/user', methods=['DELETE'])
@@ -253,17 +260,23 @@ async def deleteUser (request, user):
 	"""
 
 	config = request.app.config
+	logger = structlog.get_logger ()
+	logger = logger.bind (user=user)
+	logger.info ('delete_user_start')
 
 	try:
 		user = user.split ('@', 1)[0]
 		res = getUser (user)
 		uid = res['uid']
 		gid = res['gid']
-		logger.info (f'Got request to delete {user} {uid}/{gid}')
+		logger = logger.bind (userinfo=res)
+		logger.info ('delete_user_lookup')
 	except KeyError:
+		logger.error ('delete_user_not_found')
 		raise NotFound ({'status': 'user_not_found'})
 
 	if not (config.MIN_UID <= uid < config.MAX_UID):
+		logger.error ('delete_user_uid_requirement_not_met')
 		raise Forbidden ({'status': 'unauthorized'})
 
 	# disallow logging in by deleting principal
@@ -272,30 +285,37 @@ async def deleteUser (request, user):
 		# XXX: race-condition
 		await kadm.deletePrincipal (user)
 	except KeyError:
-		logger.warning (f'kerberos principal for {user} already gone')
-	except KAdmException:
+		logger.warning ('delete_user_kerberos_gone')
+	except KAdmException as e:
+		logger.error ('delete_user_kerberos_failed', exc_info=e)
 		raise ServerError ({'status': 'kerberos_failed'})
 
 	# mark homedir for deletion
-	async with homedirsession.delete (f'http://localhost/user/{user}') as resp:
-		deldata = await resp.json ()
-		if deldata['status'] != 'again':
-			raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
+	try:
+		async with homedirsession.delete (f'http://localhost/user/{user}') as resp:
+			deldata = await resp.json ()
+			if deldata['status'] != 'again':
+				logger.error ('delete_user_mkhomedir_failed_token', result=deldata)
+				raise ServerError ({'status': 'mkhomedird_token', 'mkhomedird_status': deldata['status']})
+	except aiohttp.ClientError as e:
+		logger.error ('delete_user_mkhomedir_unavailable_token', exc_info=e)
+		raise ServerError ({'status': 'mkhomedird_connect_token'})
 
 	conn = await ldapclient.connect (is_async=True)
 	try:
 		await conn.delete (f'uid={user},{config.LDAP_BASE_PEOPLE}')
 	except bonsai.errors.NoSuchObjectError:
-		logger.warning (f'LDAP user {user} already gone')
+		logger.warning ('delete_user_ldap_gone')
 	try:
 		await conn.delete (f'cn={user},{config.LDAP_BASE_GROUP}')
 	except bonsai.errors.NoSuchObjectError:
-		logger.warning (f'LDAP group {user} already gone')
+		logger.warning ('delete_user_ldap_group_gone')
 	# Find all secondary groups user is member in and delete membership.
 	results = await conn.search (config.LDAP_BASE_GROUP,
 			bonsai.LDAPSearchScope.SUBTREE,
 			f'(&(objectClass=posixGroup)(memberUid={user}))')
 	for g in results:
+		logger.info (f'delete_user_group_membership', group=g)
 		g['memberUid'].remove (user)
 		await g.modify ()
 	await garbageCollectGroups (config, conn)
@@ -304,12 +324,17 @@ async def deleteUser (request, user):
 	await flushUserCache ()
 
 	# finally delete homedir
-	async with homedirsession.delete (f'http://localhost/user/{user}', params={'token': deldata['token']}) as resp:
-		deldata = await resp.json ()
-		if deldata['status'] != 'ok':
-			raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
+	try:
+		async with homedirsession.delete (f'http://localhost/user/{user}', params={'token': deldata['token']}) as resp:
+			deldata = await resp.json ()
+			if deldata['status'] != 'ok':
+				logger.error ('delete_user_mkhomedir_failed_delete', result=deldata)
+				raise ServerError ({'status': 'mkhomedir_delete', 'mkhomedird_status': deldata['status']})
+	except aiohttp.ClientError as e:
+		logger.error ('delete_user_mkhomedir_unavailable_delete', exc_info=e)
+		raise ServerError ({'status': 'mkhomedird_connect_delete'})
 
-	logger.info (f'Deleted user {user}')
+	logger.info ('delete_user_success')
 	return response.json ({'status': 'ok'})
 
 reservedGroups = set ()
@@ -352,6 +377,9 @@ async def addGroup (request, rollback, newGroupName, user):
 	""" Create a new group """
 
 	config = request.app.config
+	logger = structlog.get_logger ()
+	logger = logger.bind (user=user, groupName=newGroupName)
+	logger.info ('add_group_start')
 
 	owner = ensureUser (user, config)
 
@@ -372,12 +400,13 @@ async def addGroup (request, rollback, newGroupName, user):
 		o['memberUid'] = owner['name']
 		o['description'] = f'Created by {user} for {newGroupName}'
 		try:
-			logger.debug (f'adding group {o} to ldap')
+			logger.info ('add_group_ldap', ldapGroup=o)
 			await conn.add (o)
 			# LIFO -> flush cache last
 			rollback.push_async_callback (flushUserCache)
 			rollback.push_async_callback (o.delete)
 		except bonsai.errors.AlreadyExists:
+			logger.error ('add_group_ldap_exists')
 			raise ServerError ({'status': 'group_exists'})
 
 	# flush and sanity check to make sure the group actually exists now and
@@ -390,16 +419,18 @@ async def addGroup (request, rollback, newGroupName, user):
 			resNam = grp.getgrnam (group)
 			resGid = grp.getgrgid (gid)
 			if resNam != resGid:
+				logger.error ('add_group_mismatch', fromName=resNam, fromUid=resGid)
 				raise ServerError ({'status': 'group_mismatch'})
 			ok = True
 			break
 		except KeyError:
-			logger.debug (f'group {group}/{gid} not resolvable yet, retrying')
+			logger.debug ('add_group_flush_retry')
 			await asyncio.sleep (1)
 	if not ok:
+		logger.error ('add_group_flush_failed')
 		raise ServerError ({'status': 'resolve_timeout'})
 
-	logger.info (f'Created group {group} for {owner["name"]} with GID {gid}')
+	logger.info ('add_group_success')
 	return response.json ({
 			'status': 'ok',
 			'group': group,
@@ -440,6 +471,9 @@ async def addUserToGroup (request, user, modgroup, moduser):
 	"""
 
 	config = request.app.config
+	logger = structlog.get_logger ()
+	logger = logger.bind (user=user, group=modgroup, addUser=moduser)
+	logger.info ('add_user_to_group_start')
 
 	modgroup = ensureGroup (modgroup, config)
 	gid = modgroup.gr_gid
@@ -449,15 +483,18 @@ async def addUserToGroup (request, user, modgroup, moduser):
 
 	ensureGroupMember (modgroup, user)
 
+	logger = logger.bind (addUser=moduser, group=modgroup)
+
 	conn = await ldapclient.connect (is_async=True)
 
 	results = await getLdapGroup (conn, config, modgroup.gr_name)
 	try:
+		logger.info ('add_user_to_group_ldap', ldapGroup=results)
 		results['memberUid'].append (moduser['name'])
 		await results.modify ()
 	except ValueError:
 		# User already in list. This is fine.
-		pass
+		logger.warning ('add_user_to_group_ldap_exists', ldapGroup=results)
 
 	conn.close ()
 
@@ -468,27 +505,28 @@ async def addUserToGroup (request, user, modgroup, moduser):
 
 		res = grp.getgrnam (modgroup.gr_name)
 		if moduser['name'] in res.gr_mem:
-			logger.debug (f'User {moduser["name"]} in group {modgroup.gr_name} ({res.gr_mem}), moving on.')
 			ok = True
 			break
 		else:
-			logger.debug (f'User {moduser["name"]} not yet in group {modgroup.gr_name}, waiting.')
+			logger.debug ('add_user_to_group_flush_retry')
 			await asyncio.sleep (1)
 	if not ok:
+		logger.error ('add_user_to_group_flush_failed')
 		raise ServerError ({'status': 'resolve_timeout'})
 
-	logger.info (f'Added user {moduser["name"]} to group {modgroup.gr_name}')
+	logger.info ('add_user_to_group_success')
 	return response.json ({'status': 'ok'})
 
 async def garbageCollectGroups (config, conn):
 	""" Remove groups with no members. """
 	query = f'(&(objectClass=posixGroup)(gidNumber>={config.MIN_GID})(gidNumber<={config.MAX_GID})(!(memberUid=*)))'
-	logger.info (f'Searching orphan groups with query {query}')
+	logger = structlog.get_logger ()
+	logger.info ('gc_groups_start')
 	gids = []
 	results = await conn.search (config.LDAP_BASE_GROUP,
 			bonsai.LDAPSearchScope.SUBTREE, query)
 	for g in results:
-		logger.info (f'Garbage-collected group {g["cn"]} with members {g.get("memberUid")}')
+		logger.info ('gc_groups_ldap_delete', group=g)
 		try:
 			await g.delete ()
 			gids.append (str (g['gidNumber'][0]))
@@ -501,6 +539,7 @@ async def garbageCollectGroups (config, conn):
 		async with homedirsession.delete (f'http://localhost/group/{gids}') as resp:
 			deldata = await resp.json ()
 			if deldata['status'] != 'ok':
+				logger.error ('gc_groups_mkhomedir_failed', result=deldata, gids=gids)
 				raise ServerError ({'status': 'mkhomedir_group_delete', 'mkhomedird_status': deldata['status']})
 
 @bp.route ('/group/<delgroup>', methods=['DELETE'])
@@ -511,9 +550,13 @@ async def deleteGroup (request, delgroup, user):
 	"""
 
 	config = request.app.config
+	logger = structlog.get_logger ()
+	logger = logger.bind (group=delgroup, user=user)
+	logger.info ('delete_group_start')
 
 	delgroup = ensureGroup (delgroup, config)
 	user = ensureUser (user, config)
+	logger = logger.bind (group=delgroup, user=user)
 
 	conn = await ldapclient.connect (is_async=True)
 
@@ -522,17 +565,19 @@ async def deleteGroup (request, delgroup, user):
 			bonsai.LDAPSearchScope.SUBTREE,
 			f'(gidHumber={delgroup.gr_gid})')
 	if len (results) > 0:
+		logger.error ('delete_group_is_primary', results=results)
 		raise Forbidden (dict (status='primary_group'))
 
 	results = await getLdapGroup (conn, config, delgroup.gr_name)
 	try:
+		logger.info ('delete_group_ldap', ldapGroup=results)
 		results['memberUid'].remove (user['name'])
 	except (KeyError, ValueError):
 		# KeyError, if entry has no members (i.e. no memberUid),
 		# ValueError, if user not in members.
+		logger.error ('delete_group_ldap_not_a_member')
 		raise NotFound ({'status': 'not_a_member'})
 	await results.modify ()
-	logger.info (f'Removed user {user["name"]} from group {delgroup.gr_name}')
 
 	await garbageCollectGroups (config, conn)
 	conn.close ()
@@ -552,10 +597,12 @@ async def deleteGroup (request, delgroup, user):
 			ok = True
 			break
 
-		logger.info (f'User {user["name"]} still in group {delgroup.gr_name} ({res.gr_name}) and group still exists, waiting.')
+		logger.debug ('delete_group_flush_retry')
 		await asyncio.sleep (1)
 	if not ok:
+		logger.error ('delete_group_flush_timeout')
 		raise ServerError ({'status': 'resolve_timeout'})
 
+	logger.info ('delete_group_success')
 	return response.json ({'status': 'ok'})
 

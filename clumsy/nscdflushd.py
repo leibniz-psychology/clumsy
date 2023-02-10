@@ -26,8 +26,8 @@ Must be run as root.
 
 import asyncio, subprocess
 
-from sanic import Sanic, Blueprint, response
-from sanic.log import logger
+import structlog
+from sanic import Blueprint, response
 
 bp = Blueprint('nscdflushd')
 
@@ -37,10 +37,13 @@ async def flushUserCache (request):
 	Flush nscd’s user and group caches
 	"""
 
+	logger = structlog.get_logger ()
+
 	# clear the last level cache (here, sssd) first
 	cmd = ['sss_cache', '-U', '-G']
 	proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL)
 	ret = await proc.wait ()
+	logger.info ('flush_sssd', command=cmd, ret=ret)
 	if ret != 0:
 		return response.json ({'status': 'sss_failed', 'code': ret}, status=500)
 
@@ -48,6 +51,7 @@ async def flushUserCache (request):
 	cmd = ['nscd', '-i', 'passwd', '-i', 'group']
 	proc = await asyncio.create_subprocess_exec (*cmd, stdin=subprocess.DEVNULL)
 	ret = await proc.wait ()
+	logger.info ('flush_nscd', command=cmd, ret=ret)
 	if ret != 0:
 		return response.json ({'status': 'nscd_failed', 'code': ret}, status=500)
 

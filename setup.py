@@ -18,6 +18,7 @@ setup(
         'unidecode',
         'gssapi',
         'www-authenticate',
+        'structlog',
     ],
     setup_requires=['pytest-runner'],
     tests_require=[

@@ -60,7 +60,7 @@
   (inputs (list acl rsync))
   (propagated-inputs
    (list python-sanic python-aiohttp python-unidecode python-bonsai
-         python-gssapi python-www-authenticate))
+         python-gssapi python-www-authenticate python-structlog))
   (native-inputs
     (list python-pytest python-pytest-runner python-pytest-cov
           python-pytest-asyncio python-k5test))
