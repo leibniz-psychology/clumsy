@@ -15,7 +15,6 @@ setup(
         # XXX: version 4 is currently broken, blacklist it
         'aiohttp<4',
         'bonsai',
-        'unidecode',
         'gssapi',
         'www-authenticate',
         'structlog',

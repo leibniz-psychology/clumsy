@@ -59,7 +59,7 @@
               (string-append "'" (search-input-file inputs "bin/rsync") "'"))))))))
   (inputs (list acl rsync))
   (propagated-inputs
-   (list python-sanic python-aiohttp python-unidecode python-bonsai
+   (list python-sanic python-aiohttp python-bonsai
          python-gssapi python-www-authenticate python-structlog))
   (native-inputs
     (list python-pytest python-pytest-runner python-pytest-cov

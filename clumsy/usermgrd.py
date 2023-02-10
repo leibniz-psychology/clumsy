@@ -31,7 +31,6 @@ from collections import namedtuple
 import aiohttp, bonsai, structlog
 from sanic import Blueprint, response
 from sanic.exceptions import ServerError, Forbidden, NotFound
-from unidecode import unidecode
 
 from .nss import getUser
 from .kadm import KAdm, KAdmException
