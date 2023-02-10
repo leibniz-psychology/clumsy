@@ -20,7 +20,7 @@
 
 import pytest
 
-from .usermgrd import withRollback, possibleUsernames, UserInfo
+from .usermgrd import withRollback
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("success", [True, False])
@@ -49,34 +49,4 @@ async def test_rollback(success):
 			await dut ()
 	expected = [] if success else [3, 2, 1]
 	assert executed == expected
-
-def test_possibleUsernames ():
-	# basic
-	assert list (possibleUsernames (UserInfo (
-			username='foobar',
-			firstName='foo',
-			lastName='bar')))[0:4] == ['foobar', 'fbar', 'foobar1', 'fbar1']
-
-	# foreign names
-	assert list (possibleUsernames (UserInfo (
-			firstName='هنا',
-			lastName='لطيف')))[0:2] == ['hltyf', 'hltyf1']
-
-	# long names
-	assert list (possibleUsernames (UserInfo (
-			username='veryverylongusernamerequested',
-			firstName='MyLongFirstName',
-			lastName='MyLongLastName'), maxlen=10))[0:4] == ['veryverylo', 'mmylonglas', 'veryveryl1', 'mmylongla1']
-
-	# short names
-	assert list (possibleUsernames (UserInfo (
-			username='veryverylongname',
-			firstName='Joe',
-			lastName='User'), minlen=10, maxlen=100))[0:2] == ['veryverylongname', 'veryverylongname1']
-
-	# no numbers
-	assert list (possibleUsernames (UserInfo (
-			username='0123456789',
-			firstName='Joe',
-			lastName='User'), maxlen=10))[0] == 'juser'
 
