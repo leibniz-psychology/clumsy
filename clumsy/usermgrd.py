@@ -68,7 +68,7 @@ async def flushUserCache ():
 
 def keepAscii (s):
 	""" Drop all non-ASCII characters (probably more) from s """
-	return re.sub (r'[^0-9a-zA-Z @+-]+', '', s)
+	return re.sub (r'[^0-9a-zA-Z @+.-]+', '', s)
 
 # revoke ACL while deleting the user
 bp = Blueprint('usermgrd')
@@ -171,6 +171,7 @@ async def addUser (request, rollback, user):
 		o['cn'] = user
 		# LDAP: inetOrgPerson
 		o['givenName'] = userdata.firstName
+		# IA5 string (first 128 characters of ASCII)
 		o['mail'] = keepAscii (userdata.email)
 		# LDAP: posixAccount
 		o['uid'] = user
@@ -178,6 +179,7 @@ async def addUser (request, rollback, user):
 		o['gidNumber'] = gid
 		o['homeDirectory'] = config.HOME_TEMPLATE.format (user=user)
 		o['loginShell'] = '/bin/bash'
+		# IA5 string (first 128 characters of ASCII)
 		o['gecos'] = keepAscii (userdata.username)
 		o['description'] = userdata.authorization
 		try:

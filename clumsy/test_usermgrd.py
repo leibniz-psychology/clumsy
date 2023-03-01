@@ -20,7 +20,7 @@
 
 import pytest
 
-from .usermgrd import withRollback
+from .usermgrd import withRollback, keepAscii
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("success", [True, False])
@@ -49,4 +49,13 @@ async def test_rollback(success):
 			await dut ()
 	expected = [] if success else [3, 2, 1]
 	assert executed == expected
+
+@pytest.mark.parametrize("s,expect", [
+		("foo+bar@bar.baz", "foo+bar@bar.baz"),
+		("ÄÖÜ", ""),
+		("Max Mustermann", "Max Mustermann"),
+		])
+def test_keepAscii (s, expect):
+	result = keepAscii (s)
+	assert result == expect
 
